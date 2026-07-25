@@ -4,8 +4,8 @@ DeFoutoir is a simple Python tool for cleaning and sorting pictures and movies.
 
 It accepts an unstructured input folder, including subfolders, and organizes the media files by date.
 
-> DeFoutoir is under active development. The package and quality foundation is
-> available, while the media organization workflow is being implemented.
+> DeFoutoir 0.1.0 is the first usable release. Review the dry-run preview
+> before applying a large organization operation.
 
 ## How it works
 
@@ -81,6 +81,23 @@ DeFoutoir can:
 - copy files to the date-based folders by default, while keeping the originals; or
 - move files to the date-based folders with the `--move` option.
 
+Default copy:
+
+```bash
+python -m defoutoir --input ./unstructured-media --output ./sorted-media
+```
+
+Explicit move:
+
+```bash
+python -m defoutoir --input ./unstructured-media --output ./sorted-media --move
+```
+
+Move removes a source only after its destination has been written
+successfully. Existing destination files are never overwritten; identical
+content is skipped and different content receives a deterministic alternate
+name.
+
 ## Supported media discovery
 
 The discovery layer scans every input directory recursively and accepts
@@ -107,8 +124,8 @@ paths produce warnings without stopping the remaining inputs.
 ## SQLite catalog
 
 The catalog is stored in `defoutoir.sqlite3` by default. The database path is
-configurable through the Python catalog API and will also be exposed by the
-command-line interface in a later roadmap task.
+configurable with `--database` or through the Python catalog API. Dry-run uses
+an in-memory catalog and never creates or changes the configured database.
 
 The catalog uses schema version 1 and stores the normalized source path,
 incremental SHA-1 identity, file size, modification timestamps, resolved media
@@ -140,6 +157,12 @@ takes precedence over a filename date.
 
 DeFoutoir requires Python 3.10 or newer.
 
+Install the package from a checkout and its runtime dependencies with:
+
+```bash
+python -m pip install .
+```
+
 Create a virtual environment and install the project with its development
 tools:
 
@@ -168,6 +191,31 @@ python -m pylint src tests
 ```
 
 GitHub Actions runs the same checks with Python 3.10.
+
+## Recovery and troubleshooting
+
+Use `--dry-run` first to inspect every planned destination. Copy mode keeps
+all source files, so it is the safest recovery path. Move mode is protected by
+an atomic destination transfer and removes a source only after success; a
+failed transfer leaves the source in place. Re-running the same command is
+safe: identical destinations are reported as duplicates and are not copied
+again.
+
+Common errors:
+
+- `--output is required`: add an output directory, unless using `--learn`.
+- `must not overlap`: choose an output directory outside every input tree.
+- `Processing completed with errors`: inspect the logged source and rerun
+  after fixing its permissions or destination.
+- A file in `unknown/`: no valid metadata or explicit filename date was found.
+
+The command returns `0` for success, `1` for processing failures, and `2` for
+invalid command-line options or paths.
+
+## Release readiness
+
+The quality workflow runs on Python 3.10 and enforces Black, Pylint, and the
+complete pytest suite. The project is licensed under AGPL-3.0-or-later.
 
 ## License
 
