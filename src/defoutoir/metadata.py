@@ -49,10 +49,10 @@ def extract_media_date(
     active_logger = logger or get_logger("metadata")
     candidates: list[_DateCandidate] = []
 
-    if media_path.suffix.casefold() in RASTER_EXTENSIONS:
+    is_raster = media_path.suffix.casefold() in RASTER_EXTENSIONS
+    if is_raster:
         candidates.extend(_extract_pillow_candidates(media_path, active_logger))
-
-    if not candidates or media_path.suffix.casefold() not in RASTER_EXTENSIONS:
+    else:
         candidates.extend(_extract_hachoir_candidates(media_path, active_logger))
 
     if not candidates:
@@ -127,10 +127,17 @@ def _extract_pillow_candidates(
         EXIF_DATETIME_DIGITIZED: ("metadata.exif.datetime_digitized", 1),
         EXIF_DATETIME: ("metadata.exif.datetime", 2),
     }
+    invalid_count = 0
     for tag, raw_value in values.items():
-        candidate = _make_candidate(raw_value, source_by_tag[tag], logger, path)
+        candidate = _make_candidate(raw_value, source_by_tag[tag])
         if candidate is not None:
             candidates.append(candidate)
+        elif raw_value is not None:
+            invalid_count += 1
+    if invalid_count:
+        logger.warning(
+            "Ignoring %d invalid EXIF date value(s) in %s", invalid_count, path
+        )
     return tuple(candidates)
 
 
@@ -185,15 +192,12 @@ def _extract_hachoir_candidates(
 def _make_candidate(
     raw_value: object,
     source_info: tuple[str, int],
-    logger: logging.Logger,
-    path: Path,
 ) -> _DateCandidate | None:
-    """Parse one value and turn malformed metadata into a warning."""
+    """Parse one EXIF value into a metadata candidate."""
     if raw_value is None:
         return None
     parsed = parse_metadata_date(raw_value)
     if parsed is None:
-        logger.warning("Ignoring invalid metadata date in %s: %r", path, raw_value)
         return None
     return _DateCandidate(
         value=parsed,

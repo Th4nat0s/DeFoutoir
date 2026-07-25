@@ -94,6 +94,23 @@ def test_invalid_or_missing_metadata_returns_none(caplog) -> None:
     assert any("No usable metadata date" in record.message for record in caplog.records)
 
 
+def test_raster_with_invalid_exif_does_not_fall_through_to_hachoir(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Malformed raster EXIF must not trigger noisy container parsing."""
+    image_path = tmp_path / "invalid.jpg"
+    exif = Image.Exif()
+    exif[36867] = "    :  :     :  :  "
+    Image.new("RGB", (4, 4), color="red").save(image_path, exif=exif)
+
+    def fail_hachoir(_path, _logger):
+        raise AssertionError("Hachoir must not parse raster fallback metadata")
+
+    monkeypatch.setattr(metadata_module, "_extract_hachoir_candidates", fail_hachoir)
+
+    assert extract_media_date(image_path) is None
+
+
 def test_movie_metadata_adapter_can_supply_a_date(
     tmp_path: Path,
     monkeypatch,
