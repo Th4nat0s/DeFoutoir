@@ -46,6 +46,8 @@ All input folders are scanned and organized in the same output folder.
 
 The `dry run` option previews the planned changes without moving, copying, or modifying media files.
 It is useful for checking the result before applying it.
+Dry runs also use an in-memory catalog, so the configured SQLite database is
+not created or changed.
 
 Example:
 

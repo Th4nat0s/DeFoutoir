@@ -136,7 +136,7 @@ def test_main_rejects_incompatible_learn_options(tmp_path: Path, capsys) -> None
     assert main(["--input", str(input_directory), "--learn", "--dry-run"]) == 2
 
 
-def test_main_dry_run_does_not_create_output(tmp_path: Path) -> None:
+def test_main_dry_run_does_not_create_output(tmp_path: Path, capsys) -> None:
     """Dry-run must build the workflow without creating destination files."""
     input_directory = tmp_path / "input"
     input_directory.mkdir()
@@ -148,6 +148,68 @@ def test_main_dry_run_does_not_create_output(tmp_path: Path) -> None:
         == 0
     )
     assert not output.exists()
+    assert not (tmp_path / "defoutoir.sqlite3").exists()
+    assert "DRY-RUN copy" in capsys.readouterr().err
+
+
+def test_dry_run_move_preserves_source_and_database(tmp_path: Path) -> None:
+    """Dry-run move previews operations without persistent mutations."""
+    input_directory = tmp_path / "input"
+    input_directory.mkdir()
+    source = input_directory / "photo_20240102.jpg"
+    source.write_bytes(b"photo")
+    output = tmp_path / "output"
+    database = tmp_path / "catalog.sqlite3"
+
+    assert (
+        main(
+            [
+                "--input",
+                str(input_directory),
+                "--output",
+                str(output),
+                "--move",
+                "--dry-run",
+                "--database",
+                str(database),
+            ]
+        )
+        == 0
+    )
+
+    assert source.read_bytes() == b"photo"
+    assert not output.exists()
+    assert not database.exists()
+
+
+def test_dry_run_does_not_change_existing_database(tmp_path: Path) -> None:
+    """An existing persistent catalog must remain byte-for-byte unchanged."""
+    input_directory = tmp_path / "input"
+    input_directory.mkdir()
+    (input_directory / "photo.jpg").write_bytes(b"photo")
+    database = tmp_path / "catalog.sqlite3"
+    assert (
+        main(["--input", str(input_directory), "--learn", "--database", str(database)])
+        == 0
+    )
+    before = database.read_bytes()
+
+    assert (
+        main(
+            [
+                "--input",
+                str(input_directory),
+                "--output",
+                str(tmp_path / "output"),
+                "--dry-run",
+                "--database",
+                str(database),
+            ]
+        )
+        == 0
+    )
+
+    assert database.read_bytes() == before
 
 
 def test_main_without_input_uses_argparse_validation() -> None:

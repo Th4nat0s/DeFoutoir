@@ -13,7 +13,7 @@ from defoutoir.executor import execute_organization_plan
 from defoutoir.filename_dates import resolve_media_date
 from defoutoir.log import configure_logging
 from defoutoir.metadata import extract_media_date
-from defoutoir.organization import build_organization_plan
+from defoutoir.organization import OrganizationPlan, build_organization_plan
 from defoutoir.scanner import discover_media
 
 EXIT_SUCCESS = 0
@@ -113,7 +113,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         discovery = discover_media(arguments.input_directories, logger)
-        with MediaCatalog(arguments.database, logger) as catalog:
+        database_path = ":memory:" if arguments.dry_run else arguments.database
+        with MediaCatalog(database_path, logger) as catalog:
             records, catalog_errors = _catalog_media(
                 discovery.media_files, catalog, logger
             )
@@ -124,6 +125,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             operation = "move" if arguments.move else "copy"
             plan = build_organization_plan(records, arguments.output, operation, logger)
             if arguments.dry_run:
+                _log_dry_run_plan(plan, logger)
                 logger.info("Dry run complete: %s", _format_summary(plan.summary))
                 return EXIT_PROCESSING_ERROR if catalog_errors else EXIT_SUCCESS
 
@@ -215,3 +217,16 @@ def _catalog_media(
 def _format_summary(summary: dict[str, int]) -> str:
     """Format action counts in deterministic order."""
     return ", ".join(f"{key}={summary[key]}" for key in sorted(summary)) or "none"
+
+
+def _log_dry_run_plan(plan: OrganizationPlan, logger: logging.Logger) -> None:
+    """Report every preview action and its expected destination."""
+    for entry in plan.entries:
+        destination = entry.destination_path or "<none>"
+        logger.info(
+            "DRY-RUN %s: %s -> %s (%s)",
+            entry.action.value,
+            entry.source_path,
+            destination,
+            entry.reason,
+        )
