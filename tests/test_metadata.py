@@ -139,6 +139,17 @@ def test_movie_metadata_adapter_can_supply_a_date(
     assert result.source == "metadata.container.creation_date"
 
 
+def test_invalid_movie_container_does_not_write_hachoir_warnings(
+    tmp_path: Path, capsys
+) -> None:
+    """Malformed movie containers must keep Hachoir diagnostics out of the CLI."""
+    movie_path = tmp_path / "broken.MOV"
+    movie_path.write_bytes(b"not a valid movie")
+
+    assert extract_media_date(movie_path) is None
+    assert "[warn]" not in capsys.readouterr().err
+
+
 def test_unsupported_path_returns_none(tmp_path: Path) -> None:
     """Unsupported extensions must not invoke metadata readers."""
     text_path = tmp_path / "notes.txt"

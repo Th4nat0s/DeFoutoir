@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 
+from hachoir.core.log import log as HACHOIR_LOG
 from hachoir.metadata import extractMetadata
 from hachoir.parser import createParser
 from PIL import Image
@@ -147,46 +149,58 @@ def _extract_hachoir_candidates(
 ) -> tuple[_DateCandidate, ...]:
     """Read container and RAW metadata with Hachoir."""
     try:
-        parser = createParser(str(path))
-        if parser is None:
-            return ()
-        with parser:
-            metadata = extractMetadata(parser)
-            if metadata is None:
+        with _quiet_hachoir_output():
+            parser = createParser(str(path))
+            if parser is None:
                 return ()
-            candidates = []
-            for key, source, priority in (
-                ("date_time_original", "metadata.exif.datetime_original", 0),
-                ("date_time_digitized", "metadata.exif.datetime_digitized", 1),
-                ("creation_date", "metadata.container.creation_date", 2),
-            ):
-                try:
-                    raw_value = metadata.get(key)
-                except (IndexError, KeyError, ValueError):
-                    continue
-                parsed = parse_metadata_date(raw_value)
-                if parsed is not None:
-                    candidates.append(
-                        _DateCandidate(
-                            value=parsed,
-                            source=source,
-                            raw_value=str(raw_value),
-                            priority=priority,
+            with parser:
+                metadata = extractMetadata(parser)
+                if metadata is None:
+                    return ()
+                candidates = []
+                for key, source, priority in (
+                    ("date_time_original", "metadata.exif.datetime_original", 0),
+                    ("date_time_digitized", "metadata.exif.datetime_digitized", 1),
+                    ("creation_date", "metadata.container.creation_date", 2),
+                ):
+                    try:
+                        raw_value = metadata.get(key)
+                    except (IndexError, KeyError, ValueError):
+                        continue
+                    parsed = parse_metadata_date(raw_value)
+                    if parsed is not None:
+                        candidates.append(
+                            _DateCandidate(
+                                value=parsed,
+                                source=source,
+                                raw_value=str(raw_value),
+                                priority=priority,
+                            )
                         )
-                    )
-                elif raw_value is not None:
-                    logger.warning(
-                        "Ignoring invalid container date in %s: %r",
-                        path,
-                        raw_value,
-                    )
-            return tuple(candidates)
+                    elif raw_value is not None:
+                        logger.warning(
+                            "Ignoring invalid container date in %s: %r",
+                            path,
+                            raw_value,
+                        )
+                return tuple(candidates)
     except (OSError, RuntimeError, ValueError) as error:
         logger.warning("Could not read container metadata from %s: %s", path, error)
         return ()
     except Exception as error:  # pylint: disable=broad-exception-caught
         logger.warning("Unexpected metadata error for %s: %s", path, error)
         return ()
+
+
+@contextmanager
+def _quiet_hachoir_output():
+    """Prevent Hachoir's legacy stderr warnings from polluting the CLI."""
+    previous_use_print = HACHOIR_LOG.use_print
+    HACHOIR_LOG.use_print = False
+    try:
+        yield
+    finally:
+        HACHOIR_LOG.use_print = previous_use_print
 
 
 def _make_candidate(
