@@ -42,6 +42,15 @@ def test_canon_cr2_reads_exif_capture_date_before_hachoir() -> None:
     assert result.source == "metadata.exif.datetime_original"
 
 
+def test_real_canon_cr2_reads_generic_exif_capture_date() -> None:
+    """A real Canon CR2 with a generic EXIF date must still be cataloged."""
+    result = extract_media_date(FIXTURE_ROOT / "raw" / "_MG_8968.CR2")
+
+    assert result is not None
+    assert result.value == datetime(2022, 4, 17, 0, 36, 51)
+    assert result.source == "metadata.exif.datetime_original"
+
+
 def test_lightroom_dng_reads_capture_date_from_exif() -> None:
     """A Lightroom DNG must not fall back to its later container date."""
     result = extract_media_date(FIXTURE_ROOT / "raw" / "_MG_3055.dng")

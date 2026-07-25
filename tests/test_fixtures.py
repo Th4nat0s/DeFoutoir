@@ -34,6 +34,9 @@ EXPECTED_SHA256 = {
     "raw/_MG_3055.dng": (
         "0d4188ef0771f5a74bd172781da4be23cac6c1dcc79fa2dbf43f63b8a6fb93a2"
     ),
+    "raw/_MG_8968.CR2": (
+        "7510508d3ee911b9a5ef88a16856baaacb5ef5a17ae563c58b937a315ff72e13"
+    ),
     "raw/sample.dng": (
         "68e5f8554a17106c20525e4c0b8ade17403f906171e8a3d934fbeb426b8ccc05"
     ),
@@ -52,8 +55,8 @@ def calculate_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def test_fixture_set_contains_exactly_eleven_files() -> None:
-    """The repository must contain the selected eleven media fixtures."""
+def test_fixture_set_contains_exactly_twelve_files() -> None:
+    """The repository must contain the selected twelve media fixtures."""
     actual_paths = {
         path.relative_to(FIXTURE_ROOT).as_posix()
         for path in FIXTURE_ROOT.rglob("*")

@@ -1,6 +1,6 @@
 # Media test fixtures
 
-These eleven media files provide stable RAW, JPEG, and PNG inputs for the
+These twelve media files provide stable RAW, JPEG, and PNG inputs for the
 DeFoutoir test suite. The URLs are pinned to exact upstream commits.
 
 The RAW fixtures are metadata-oriented samples and may contain only a reduced
@@ -20,6 +20,7 @@ Upstream license:
 | `raw/sample.arw` | [`sample.arw`](https://github.com/bep/imagemeta/blob/2289fdf83fcd238d86f72e65c588da687c998437/testdata/images/sample.arw) | `a188d977540c9121e51ea45df41b1c24bfb80e12ed18d3ece9b45b4db73d5af2` |
 | `raw/sample.cr2` | [`sample.cr2`](https://github.com/bep/imagemeta/blob/2289fdf83fcd238d86f72e65c588da687c998437/testdata/images/sample.cr2) | `651f1c9090adbc1d2e8b69b973b89e051b519f0824d7d9d19c47ca4cf521d872` |
 | `raw/_MG_3055.dng` | user-provided Canon/Lightroom DNG regression fixture | `0d4188ef0771f5a74bd172781da4be23cac6c1dcc79fa2dbf43f63b8a6fb93a2` |
+| `raw/_MG_8968.CR2` | user-provided Canon CR2 regression fixture | `7510508d3ee911b9a5ef88a16856baaacb5ef5a17ae563c58b937a315ff72e13` |
 | `raw/sample.dng` | [`sample.dng`](https://github.com/bep/imagemeta/blob/2289fdf83fcd238d86f72e65c588da687c998437/testdata/images/sample.dng) | `68e5f8554a17106c20525e4c0b8ade17403f906171e8a3d934fbeb426b8ccc05` |
 | `raw/sample.nef` | [`sample.nef`](https://github.com/bep/imagemeta/blob/2289fdf83fcd238d86f72e65c588da687c998437/testdata/images/sample.nef) | `d2807a93c95b14226a02c2f3c392fae6209b8bc477dd23818722e794e5c83a81` |
 | `raw/jolstravatnet.pef` | [`jølstravatnet.pef`](https://github.com/bep/imagemeta/blob/2289fdf83fcd238d86f72e65c588da687c998437/testdata/images/bep/j%C3%B8lstravatnet.pef) | `de99991add7af41a21aa8b86f9579f27d5544fdb4b40f4e97964d3adf1989d2b` |
