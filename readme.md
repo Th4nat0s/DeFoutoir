@@ -138,7 +138,8 @@ List the catalog without scanning or modifying anything:
 python defoutoir.py --list --database ./defoutoir.sqlite3
 ```
 
-The output contains `name`, `sha1`, `date`, and the normalized source path.
+The output contains the selected `timestamp`, its `date_source`, `name`,
+`sha1`, and the normalized `pathname`.
 
 ## Metadata date precedence
 

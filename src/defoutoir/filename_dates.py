@@ -42,6 +42,8 @@ _DATE_PATTERNS = (
         ),
     ),
 )
+_PATH_YEAR = re.compile(r"^(?P<year>\d{4})$")
+_PATH_MONTH_DAY = re.compile(r"^(?P<month>\d{2})(?P<day>\d{2})(?:$|[\s_-])")
 
 
 def extract_filename_date(
@@ -103,6 +105,60 @@ def extract_filename_date(
     return result
 
 
+def extract_path_date(
+    path: Path, logger: logging.Logger | None = None
+) -> FilenameDate | None:
+    """Return a valid ``YYYY/MMDD`` date encoded by path components."""
+    active_logger = logger or logging.getLogger(__name__)
+    parts = path.parts
+    candidates: list[FilenameDate] = []
+    saw_date_like_value = False
+
+    for index, component in enumerate(parts):
+        match = _PATH_MONTH_DAY.match(component)
+        if match is None:
+            continue
+        saw_date_like_value = True
+        year = next(
+            (
+                year_match.group("year")
+                for previous in reversed(parts[:index])
+                if (year_match := _PATH_YEAR.match(previous)) is not None
+            ),
+            None,
+        )
+        if year is None:
+            continue
+        raw_value = f"{year}/{match.group(0).split()[0].rstrip('_-')}"
+        try:
+            value = date(int(year), int(match.group("month")), int(match.group("day")))
+        except ValueError:
+            active_logger.warning(
+                "Ignoring invalid path date-like value %s in %s", raw_value, path
+            )
+            continue
+        candidates.append(
+            FilenameDate(
+                value=value,
+                source="path.year_mmdd",
+                pattern="path_year_mmdd",
+                raw_value=raw_value,
+            )
+        )
+
+    distinct_dates = {candidate.value for candidate in candidates}
+    if len(distinct_dates) > 1:
+        active_logger.warning("Ignoring ambiguous dates in path %s", path)
+        return None
+    if not candidates:
+        if saw_date_like_value:
+            active_logger.warning("No valid date found in path %s", path)
+        return None
+    result = candidates[0]
+    active_logger.info("Using path date %s from %s", result.value, path)
+    return result
+
+
 def resolve_media_date(
     path: Path,
     metadata_date: MetadataDate | None,
@@ -119,6 +175,8 @@ def resolve_media_date(
         )
 
     filename_date = extract_filename_date(path, logger=logger)
+    if filename_date is None:
+        filename_date = extract_path_date(path, logger=logger)
     if filename_date is None:
         return None
     return ResolvedDate(

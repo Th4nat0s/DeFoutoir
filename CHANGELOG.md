@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.2 - 2026-07-25
+
+- Added read-only `--list` output with timestamp, date source, name, SHA-1,
+  and pathname.
+- Added path date fallback for album paths such as `2002/0208 Wicher`.
+
 ## 0.1.1 - 2026-07-25
 
 - Added the standalone `defoutoir.py` launcher.

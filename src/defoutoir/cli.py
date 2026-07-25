@@ -231,11 +231,11 @@ def _format_summary(summary: dict[str, int]) -> str:
 
 def _print_catalog_records(records: tuple[MediaRecord, ...]) -> None:
     """Print catalog records as stable tab-separated output."""
-    print("name\tsha1\tdate	source")
+    print("timestamp\tdate_source\tname\tsha1\tpathname")
     for record in records:
         print(
-            f"{Path(record.source_path).name}\t{record.sha1}\t"
-            f"{record.media_date or '-'}\t{record.source_path}"
+            f"{record.media_date or '-'}\t{record.date_source or '-'}\t"
+            f"{Path(record.source_path).name}\t{record.sha1}\t{record.source_path}"
         )
 
 

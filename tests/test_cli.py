@@ -32,7 +32,7 @@ def test_script_help() -> None:
 
 def test_version_is_available() -> None:
     """The package must publish its version."""
-    assert __version__ == "0.1.1"
+    assert __version__ == "0.1.2"
     assert __license__ == "AGPL-3.0-or-later"
 
 
@@ -230,9 +230,10 @@ def test_list_prints_name_hash_date_and_source(tmp_path: Path, capsys) -> None:
 
     assert main(["--list", "--database", str(database)]) == 0
     output = capsys.readouterr().out
-    assert "name\tsha1\tdate\tsource" in output
+    assert "timestamp\tdate_source\tname\tsha1\tpathname" in output
     assert "photo_20240102.jpg" in output
     assert "2024-01-02 00:00:00" in output
+    assert "filename.compact_yyyymmdd" in output
     assert str(source) in output
 
 

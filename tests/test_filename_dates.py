@@ -81,3 +81,26 @@ def test_resolve_media_date_uses_filename_at_midnight() -> None:
 
 def test_resolve_media_date_returns_none_without_any_date() -> None:
     assert filename_dates.resolve_media_date(Path("readme.txt"), None) is None
+
+
+def test_extract_path_date_supports_album_year_and_month_day() -> None:
+    """Album paths such as 2002/0208 Wicher resolve to 8 February 2002."""
+    result = filename_dates.extract_path_date(
+        Path("Albums/2002/0208 Wicher/.AppleDouble/26 - P210A - Moyeuvre.jpg")
+    )
+
+    assert result is not None
+    assert result.value == date(2002, 2, 8)
+    assert result.source == "path.year_mmdd"
+    assert result.raw_value == "2002/0208"
+
+
+def test_resolve_media_date_uses_path_after_filename() -> None:
+    """Path dates are the final fallback when metadata and filename are empty."""
+    result = filename_dates.resolve_media_date(
+        Path("Albums/2002/0208 Wicher/photo.jpg"), None
+    )
+
+    assert result is not None
+    assert result.value == datetime(2002, 2, 8)
+    assert result.source == "path.year_mmdd"
