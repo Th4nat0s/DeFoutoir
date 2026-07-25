@@ -18,6 +18,7 @@ class FilenameDate(NamedTuple):
     source: str
     pattern: str
     raw_value: str
+    capture_time: time | None = None
 
 
 class ResolvedDate(NamedTuple):
@@ -44,6 +45,35 @@ _DATE_PATTERNS = (
 )
 _PATH_YEAR = re.compile(r"^(?P<year>\d{4})$")
 _PATH_MONTH_DAY = re.compile(r"^(?P<month>\d{2})(?P<day>\d{2})(?:$|[\s_-])")
+_FILENAME_TIME = re.compile(
+    r"^(?:\s+at\s+|[_ -]+)(?P<hour>\d{2})[.:]"
+    r"(?P<minute>\d{2})[.:](?P<second>\d{2})(?!\d)"
+)
+_COMPACT_FILENAME_TIME = re.compile(
+    r"^(?:[_ -]+)(?P<hour>\d{2})(?P<minute>\d{2})(?P<second>\d{2})(?!\d)"
+)
+
+
+def _extract_filename_time(
+    suffix: str, filename: str, logger: logging.Logger
+) -> tuple[time | None, str]:
+    """Extract an optional HHMMSS or HH.MM.SS suffix from a filename."""
+    match = _FILENAME_TIME.match(suffix) or _COMPACT_FILENAME_TIME.match(suffix)
+    if match is None:
+        return None, ""
+    raw_value = match.group(0)
+    try:
+        value = time(
+            int(match.group("hour")),
+            int(match.group("minute")),
+            int(match.group("second")),
+        )
+    except ValueError:
+        logger.warning(
+            "Ignoring invalid time-like value %s in filename %s", raw_value, filename
+        )
+        return None, raw_value
+    return value, raw_value
 
 
 def extract_filename_date(
@@ -73,12 +103,16 @@ def extract_filename_date(
                     filename,
                 )
                 continue
+            capture_time, time_raw_value = _extract_filename_time(
+                filename[match.end() :], filename, active_logger
+            )
             candidates.append(
                 FilenameDate(
                     value=value,
                     source=f"filename.{pattern}",
                     pattern=pattern,
-                    raw_value=raw_value,
+                    raw_value=raw_value + time_raw_value,
+                    capture_time=capture_time,
                 )
             )
 
@@ -180,7 +214,9 @@ def resolve_media_date(
     if filename_date is None:
         return None
     return ResolvedDate(
-        value=datetime.combine(filename_date.value, time.min),
+        value=datetime.combine(
+            filename_date.value, filename_date.capture_time or time.min
+        ),
         source=filename_date.source,
         raw_value=filename_date.raw_value,
         pattern=filename_date.pattern,

@@ -2,7 +2,7 @@
 
 # pylint: disable=missing-function-docstring
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 from pathlib import Path
 
 import pytest
@@ -28,6 +28,36 @@ def test_extract_filename_date_supports_documented_patterns(
     assert result is not None
     assert result.value == expected
     assert result.pattern == pattern
+
+
+@pytest.mark.parametrize(
+    ("filename", "expected"),
+    [
+        (
+            "WhatsApp Image 2017-06-07 at 23.37.34.jpeg",
+            datetime(2017, 6, 7, 23, 37, 34),
+        ),
+        ("signal-2021-09-05-094323_002.jpeg", datetime(2021, 9, 5, 9, 43, 23)),
+        ("IMG_20240102_123456.JPG", datetime(2024, 1, 2, 12, 34, 56)),
+    ],
+)
+def test_resolve_media_date_extracts_filename_timestamp(
+    filename: str, expected: datetime
+) -> None:
+    result = filename_dates.resolve_media_date(Path(filename), None)
+
+    assert result is not None
+    assert result.value == expected
+
+
+def test_extract_filename_date_keeps_time_as_structured_value() -> None:
+    result = filename_dates.extract_filename_date(
+        Path("WhatsApp Image 2017-06-07 at 23.37.34.jpeg")
+    )
+
+    assert result is not None
+    assert result.capture_time == time(23, 37, 34)
+    assert result.raw_value == "2017-06-07 at 23.37.34"
 
 
 @pytest.mark.parametrize(

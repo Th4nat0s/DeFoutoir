@@ -167,9 +167,11 @@ metadata produces a warning or a clean no-date result.
 
 When no usable metadata date exists, DeFoutoir can read an explicit date from
 the filename. The supported patterns are `YYYYMMDD`, `YYYY-MM-DD`,
-`YYYY_MM_DD`, and `YYYY.MM.DD`. Invalid dates, ambiguous short formats, and
-filenames containing multiple different dates are ignored. Metadata always
-takes precedence over a filename date.
+`YYYY_MM_DD`, and `YYYY.MM.DD`. An optional capture time is also read when it
+follows the date as `HHMMSS` (for example `IMG_20240102_123456.JPG`) or as
+`at HH.MM.SS` (for example a WhatsApp export). Invalid dates, ambiguous short
+formats, and filenames containing multiple different dates are ignored.
+Metadata always takes precedence over a filename date.
 
 ## Development setup
 
