@@ -169,7 +169,7 @@ def test_all_downloaded_media_fixtures_are_supported() -> None:
     """The ten downloaded fixtures must all be discoverable media."""
     result = discover_media([MEDIA_FIXTURES])
 
-    assert len(result.media_files) == 10
+    assert len(result.media_files) == 11
     assert all(is_supported_media(path) for path in result.media_files)
 
 

@@ -33,6 +33,24 @@ def test_raw_file_uses_hachoir_creation_date() -> None:
     assert result.source == "metadata.container.creation_date"
 
 
+def test_canon_cr2_reads_exif_capture_date_before_hachoir() -> None:
+    """Canon CR2 EXIF must be preferred when Hachoir cannot parse all IFDs."""
+    result = extract_media_date(FIXTURE_ROOT / "raw" / "sample.cr2")
+
+    assert result is not None
+    assert result.value == datetime(2011, 8, 24, 14, 41, 4)
+    assert result.source == "metadata.exif.datetime_original"
+
+
+def test_lightroom_dng_reads_capture_date_from_exif() -> None:
+    """A Lightroom DNG must not fall back to its later container date."""
+    result = extract_media_date(FIXTURE_ROOT / "raw" / "_MG_3055.dng")
+
+    assert result is not None
+    assert result.value == datetime(2013, 6, 29, 11, 57, 49)
+    assert result.source == "metadata.exif.datetime_original"
+
+
 def test_all_relevant_fixture_dates_are_safe_to_read() -> None:
     """Supported fixtures must not crash metadata extraction."""
     paths = [

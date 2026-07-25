@@ -156,8 +156,9 @@ several timestamps are available, it uses this order:
 
 1. EXIF `DateTimeOriginal`;
 2. EXIF `DateTimeDigitized`;
-3. generic EXIF `DateTime`;
-4. container creation date from RAW or video metadata.
+3. XMP `photoshop:DateCreated` or `xmp:CreateDate`;
+4. generic EXIF `DateTime`;
+5. container creation date from RAW or video metadata.
 
 Dates are normalized to UTC when a timezone is present. Invalid or missing
 metadata produces a warning or a clean no-date result.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from contextlib import contextmanager, redirect_stderr
 from datetime import date, datetime, timezone
 from io import StringIO
@@ -23,6 +24,16 @@ EXIF_DATETIME = 306
 EXIF_IFD_POINTER = 34665
 RASTER_EXTENSIONS = PICTURE_EXTENSIONS.intersection(
     ".bmp .gif .heic .heif .jpeg .jpg .png .tif .tiff .webp".split()
+)
+PILLOW_RAW_EXTENSIONS = frozenset({".cr2", ".cr3", ".dng", ".nef", ".nrw"})
+XMP_DATE_PATTERNS = (
+    (
+        b"photoshop:DateCreated",
+        "metadata.xmp.photoshop.date_created",
+        2,
+    ),
+    (b"xmp:CreateDate", "metadata.xmp.create_date", 2),
+    (b"exif:DateTimeOriginal", "metadata.xmp.datetime_original", 0),
 )
 
 
@@ -53,9 +64,10 @@ def extract_media_date(
     candidates: list[_DateCandidate] = []
 
     is_raster = media_path.suffix.casefold() in RASTER_EXTENSIONS
-    if is_raster:
+    if is_raster or media_path.suffix.casefold() in PILLOW_RAW_EXTENSIONS:
         candidates.extend(_extract_pillow_candidates(media_path, active_logger))
-    else:
+    if not is_raster:
+        candidates.extend(_extract_xmp_candidates(media_path, active_logger))
         candidates.extend(_extract_hachoir_candidates(media_path, active_logger))
 
     if not candidates:
@@ -128,7 +140,7 @@ def _extract_pillow_candidates(
     source_by_tag = {
         EXIF_DATETIME_ORIGINAL: ("metadata.exif.datetime_original", 0),
         EXIF_DATETIME_DIGITIZED: ("metadata.exif.datetime_digitized", 1),
-        EXIF_DATETIME: ("metadata.exif.datetime", 2),
+        EXIF_DATETIME: ("metadata.exif.datetime", 3),
     }
     invalid_count = 0
     for tag, raw_value in values.items():
@@ -162,7 +174,7 @@ def _extract_hachoir_candidates(
                 for key, source, priority in (
                     ("date_time_original", "metadata.exif.datetime_original", 0),
                     ("date_time_digitized", "metadata.exif.datetime_digitized", 1),
-                    ("creation_date", "metadata.container.creation_date", 2),
+                    ("creation_date", "metadata.container.creation_date", 4),
                 ):
                     try:
                         raw_value = metadata.get(key)
@@ -191,6 +203,45 @@ def _extract_hachoir_candidates(
     except Exception as error:  # pylint: disable=broad-exception-caught
         logger.warning("Unexpected metadata error for %s: %s", path, error)
         return ()
+
+
+def _extract_xmp_candidates(
+    path: Path,
+    logger: logging.Logger,
+) -> tuple[_DateCandidate, ...]:
+    """Read capture-oriented XMP dates embedded in RAW/container files."""
+    try:
+        content = path.read_bytes()
+    except OSError as error:
+        logger.debug("Could not inspect XMP metadata in %s: %s", path, error)
+        return ()
+
+    candidates: list[_DateCandidate] = []
+    for tag, source, priority in XMP_DATE_PATTERNS:
+        expression = re.compile(
+            rb"(?:"
+            + re.escape(tag)
+            + rb"\s*=\s*['\"]([^'\"]+)['\"]|"
+            + re.escape(tag)
+            + rb"\s+([^\s>]+))"
+        )
+        match = expression.search(content)
+        if match is None:
+            continue
+        raw_value = next((value for value in match.groups() if value), b"")
+        parsed = parse_metadata_date(raw_value)
+        if parsed is None:
+            logger.warning("Ignoring invalid XMP date in %s: %r", path, raw_value)
+            continue
+        candidates.append(
+            _DateCandidate(
+                value=parsed,
+                source=source,
+                raw_value=raw_value.decode("utf-8", errors="replace"),
+                priority=priority,
+            )
+        )
+    return tuple(candidates)
 
 
 @contextmanager
