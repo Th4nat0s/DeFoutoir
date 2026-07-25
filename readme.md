@@ -91,6 +91,17 @@ Symbolic links found inside an input tree are skipped. An input path that is
 itself a symbolic link is resolved once before scanning. Unreadable or invalid
 paths produce warnings without stopping the remaining inputs.
 
+## SQLite catalog
+
+The catalog is stored in `defoutoir.sqlite3` by default. The database path is
+configurable through the Python catalog API and will also be exposed by the
+command-line interface in a later roadmap task.
+
+The catalog uses schema version 1 and stores the normalized source path,
+incremental SHA-1 identity, file size, modification timestamps, resolved media
+date, date source, and processing state. A SHA-1 index makes duplicate-content
+groups queryable without changing or deleting the original files.
+
 ## Development setup
 
 DeFoutoir requires Python 3.10 or newer.
