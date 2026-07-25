@@ -135,6 +135,18 @@ def test_symbolic_links_are_skipped(tmp_path: Path) -> None:
     assert result.skipped_paths == 2
 
 
+def test_macos_metadata_directories_are_skipped(tmp_path: Path) -> None:
+    """AppleDouble and macOS archive metadata must not be treated as media."""
+    valid_file = create_file(tmp_path / "photo.jpg")
+    create_file(tmp_path / ".AppleDouble" / "0713.jpg", b"resource fork")
+    create_file(tmp_path / "__MACOSX" / "preview.png", b"resource fork")
+
+    result = discover_media([tmp_path])
+
+    assert result.media_files == (valid_file,)
+    assert result.skipped_paths == 2
+
+
 def test_results_are_deterministic(tmp_path: Path) -> None:
     """Repeated discovery must return exactly the same ordered paths."""
     create_file(tmp_path / "z.jpg")

@@ -55,6 +55,7 @@ MOVIE_EXTENSIONS = frozenset(
     }
 )
 MEDIA_EXTENSIONS = PICTURE_EXTENSIONS | MOVIE_EXTENSIONS
+IGNORED_DIRECTORY_NAMES = frozenset({".appledouble", "__macosx"})
 
 
 class DiscoveryResult(NamedTuple):
@@ -202,6 +203,10 @@ def _scan_root(root: Path, logger: logging.Logger) -> DiscoveryResult:
 
             try:
                 if child.is_dir():
+                    if child.name.casefold() in IGNORED_DIRECTORY_NAMES:
+                        logger.debug("Skipping metadata directory: %s", child)
+                        skipped_paths += 1
+                        continue
                     child_directories.append(child)
                     continue
                 if not child.is_file():

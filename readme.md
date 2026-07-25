@@ -119,7 +119,8 @@ Supported movie extensions:
 
 Symbolic links found inside an input tree are skipped. An input path that is
 itself a symbolic link is resolved once before scanning. Unreadable or invalid
-paths produce warnings without stopping the remaining inputs.
+paths produce warnings without stopping the remaining inputs. macOS metadata
+directories such as `.AppleDouble` and `__MACOSX` are ignored.
 
 ## SQLite catalog
 
