@@ -68,6 +68,29 @@ DeFoutoir can:
 - copy files to the date-based folders by default, while keeping the originals; or
 - move files to the date-based folders with the `--move` option.
 
+## Supported media discovery
+
+The discovery layer scans every input directory recursively and accepts
+multiple inputs in one operation. Duplicate and overlapping inputs are scanned
+only once, and results are returned in deterministic path order.
+
+Supported picture extensions:
+
+```text
+arw, bmp, cr2, cr3, dng, gif, heic, heif, jpeg, jpg, nef, nrw, orf,
+pef, png, raf, raw, rw2, sr2, srf, tif, tiff, webp, x3f
+```
+
+Supported movie extensions:
+
+```text
+3g2, 3gp, avi, m2ts, m4v, mkv, mov, mp4, mpeg, mpg, mts, webm, wmv
+```
+
+Symbolic links found inside an input tree are skipped. An input path that is
+itself a symbolic link is resolved once before scanning. Unreadable or invalid
+paths produce warnings without stopping the remaining inputs.
+
 ## Development setup
 
 DeFoutoir requires Python 3.10 or newer.
@@ -100,3 +123,10 @@ python -m pylint src tests
 ```
 
 GitHub Actions runs the same checks with Python 3.10.
+
+## License
+
+Copyright (C) 2026 Th4nat0s.
+
+DeFoutoir is free software licensed under the
+[GNU Affero General Public License version 3 or later](LICENSE).

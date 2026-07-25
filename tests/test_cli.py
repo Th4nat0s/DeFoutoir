@@ -7,7 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from defoutoir import __version__
+from defoutoir import __license__, __version__
 from defoutoir.cli import main
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -34,6 +34,7 @@ def test_module_help() -> None:
 def test_version_is_available() -> None:
     """The package must publish its version."""
     assert __version__ == "0.1.0"
+    assert __license__ == "AGPL-3.0-or-later"
 
 
 def test_main_reports_ready_status(capsys) -> None:
