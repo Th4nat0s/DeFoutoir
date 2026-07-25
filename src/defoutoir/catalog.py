@@ -174,6 +174,39 @@ class MediaCatalog:
         self._logger.info("Updated media date: %s", source_path)
         return record
 
+    def update_processing_state(self, path: str | Path, state: str) -> MediaRecord:
+        """Record the latest planning or execution state for one media file."""
+        source_path = self._normalize_lookup_path(path)
+        connection = self._connection_or_raise()
+        updated_at_ns = time.time_ns()
+        try:
+            with connection:
+                cursor = connection.execute(
+                    """
+                    UPDATE media_files
+                    SET processing_state = ?, updated_at_ns = ?
+                    WHERE source_path = ?
+                    """,
+                    (state, updated_at_ns, source_path),
+                )
+                if cursor.rowcount != 1:
+                    raise CatalogError(f"Media file is not cataloged: {source_path}")
+        except (CatalogError, sqlite3.Error) as error:
+            self._logger.error(
+                "Could not update processing state for %s: %s", path, error
+            )
+            if isinstance(error, CatalogError):
+                raise
+            raise CatalogError(
+                f"Could not update processing state for {source_path}: {error}"
+            ) from error
+
+        record = self.get_by_path(source_path)
+        if record is None:
+            raise CatalogError(f"Media file disappeared from catalog: {source_path}")
+        self._logger.info("Updated processing state for %s: %s", source_path, state)
+        return record
+
     def get_by_path(self, path: str | Path) -> MediaRecord | None:
         """Return the record for a normalized source path, if present."""
         source_path = self._normalize_lookup_path(path)

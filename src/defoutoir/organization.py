@@ -89,11 +89,6 @@ def _plan_record(
 ) -> OrganizationPlanEntry:
     """Plan one record and reserve its deterministic destination."""
     source = Path(record.source_path)
-    if not source.is_file():
-        return OrganizationPlanEntry(
-            source, None, PlanAction.ERROR, "source file is not readable", record.sha1
-        )
-
     relative_directory = _date_directory(record.media_date)
     destination = _safe_destination(output, relative_directory / source.name)
     if destination is None:
@@ -112,6 +107,9 @@ def _plan_record(
     if destination.exists() or reason == "same content is planned at destination":
         action = PlanAction.DUPLICATE
         reason = "same content is already at destination"
+    elif not source.is_file():
+        action = PlanAction.ERROR
+        reason = "source file is not readable"
     else:
         action = operation
     logger.info("Planned %s: %s -> %s", action.value, source, destination)
