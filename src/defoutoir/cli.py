@@ -8,11 +8,10 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from defoutoir import __version__
-from defoutoir.catalog import CatalogError, MediaCatalog, MediaRecord
+from defoutoir.catalog import CatalogError, MediaCatalog
 from defoutoir.executor import execute_organization_plan
-from defoutoir.filename_dates import resolve_media_date
+from defoutoir.learning import learn_media
 from defoutoir.log import configure_logging
-from defoutoir.metadata import extract_media_date
 from defoutoir.organization import OrganizationPlan, build_organization_plan
 from defoutoir.scanner import discover_media
 
@@ -115,11 +114,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         discovery = discover_media(arguments.input_directories, logger)
         database_path = ":memory:" if arguments.dry_run else arguments.database
         with MediaCatalog(database_path, logger) as catalog:
-            records, catalog_errors = _catalog_media(
-                discovery.media_files, catalog, logger
+            learning = learn_media(
+                discovery.media_files,
+                tuple(arguments.input_directories),
+                catalog,
+                logger,
+                discovery.warning_count,
             )
+            records = learning.records
+            catalog_errors = learning.summary.get("error", 0)
             if arguments.learn:
-                logger.info("Learn complete: %d media files cataloged.", len(records))
+                logger.info("Learn summary: %s", _format_summary(learning.summary))
                 return EXIT_PROCESSING_ERROR if catalog_errors else EXIT_SUCCESS
 
             operation = "move" if arguments.move else "copy"
@@ -182,36 +187,6 @@ def _validate_arguments(arguments: argparse.Namespace) -> None:
                 "Input and output directories must not overlap; "
                 "choose a separate output directory"
             )
-
-
-def _catalog_media(
-    media_files: tuple[Path, ...],
-    catalog: MediaCatalog,
-    logger: logging.Logger,
-) -> tuple[tuple[MediaRecord, ...], int]:
-    """Extract dates and upsert discovered files into the catalog."""
-    records: list[MediaRecord] = []
-    error_count = 0
-    for media_path in media_files:
-        metadata_date = extract_media_date(media_path, logger)
-        resolved_date = resolve_media_date(media_path, metadata_date, logger)
-        media_date = resolved_date.value.isoformat(sep=" ") if resolved_date else None
-        date_source = resolved_date.source if resolved_date else None
-        try:
-            records.append(
-                catalog.record_file(
-                    media_path,
-                    media_date=media_date,
-                    date_source=date_source,
-                )
-            )
-        except CatalogError as error:
-            logger.error("Could not catalog %s: %s", media_path, error)
-            error_count += 1
-    logger.info(
-        "Cataloged %d of %d discovered media files.", len(records), len(media_files)
-    )
-    return tuple(records), error_count
 
 
 def _format_summary(summary: dict[str, int]) -> str:

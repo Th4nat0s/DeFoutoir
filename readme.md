@@ -70,6 +70,9 @@ python -m defoutoir --input ./unstructured-media --learn
 ```
 
 Learn mode only reads the media files and updates the database. It does not change the input or output folders.
+Each learned file is classified as `learned`, `updated`, `unchanged`, or
+`duplicate`; files previously cataloged but no longer present under the input
+folders are marked `missing`.
 
 ## File operations
 
