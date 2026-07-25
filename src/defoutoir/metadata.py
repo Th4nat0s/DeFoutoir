@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stderr
 from datetime import date, datetime, timezone
+from io import StringIO
 from pathlib import Path
 from typing import NamedTuple
 
@@ -198,7 +199,8 @@ def _quiet_hachoir_output():
     previous_use_print = HACHOIR_LOG.use_print
     HACHOIR_LOG.use_print = False
     try:
-        yield
+        with redirect_stderr(StringIO()):
+            yield
     finally:
         HACHOIR_LOG.use_print = previous_use_print
 
