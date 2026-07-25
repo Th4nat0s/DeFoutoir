@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "defoutoir"
+version = "0.1.0"
+description = "Clean and sort pictures and movies by date."
+readme = "readme.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "Th4nat0s" },
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "black>=24.4,<27",
+    "pylint>=3.2,<5",
+    "pytest>=8.2,<10",
+]
+
+[project.scripts]
+defoutoir = "defoutoir.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.pylint.main]
+persistent = false
+py-version = "3.10"
+
+[tool.pylint.format]
+max-line-length = 88
