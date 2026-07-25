@@ -13,7 +13,10 @@ license-files = ["LICENSE"]
 authors = [
     { name = "Th4nat0s" },
 ]
-dependencies = []
+dependencies = [
+    "Pillow>=11,<14",
+    "hachoir>=3.3,<4",
+]
 
 [project.optional-dependencies]
 dev = [

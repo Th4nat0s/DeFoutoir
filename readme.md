@@ -102,6 +102,20 @@ incremental SHA-1 identity, file size, modification timestamps, resolved media
 date, date source, and processing state. A SHA-1 index makes duplicate-content
 groups queryable without changing or deleting the original files.
 
+## Metadata date precedence
+
+The metadata extractor reads dates without modifying the source file. When
+several timestamps are available, it uses this order:
+
+1. EXIF `DateTimeOriginal`;
+2. EXIF `DateTimeDigitized`;
+3. generic EXIF `DateTime`;
+4. container creation date from RAW or video metadata.
+
+Dates are normalized to UTC when a timezone is present. Invalid or missing
+metadata produces a warning or a clean no-date result so filename fallback can
+run in a later roadmap task.
+
 ## Development setup
 
 DeFoutoir requires Python 3.10 or newer.
