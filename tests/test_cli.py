@@ -15,13 +15,12 @@ from defoutoir.cli import main
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_module_help() -> None:
-    """The package must expose help through python -m defoutoir."""
+def test_script_help() -> None:
+    """The root script must expose help without package installation."""
     environment = os.environ.copy()
-    environment["PYTHONPATH"] = str(PROJECT_ROOT / "src")
 
     result = subprocess.run(
-        [sys.executable, "-m", "defoutoir", "--help"],
+        [sys.executable, "defoutoir.py", "--help"],
         cwd=PROJECT_ROOT,
         env=environment,
         check=False,
@@ -35,7 +34,7 @@ def test_module_help() -> None:
 
 def test_version_is_available() -> None:
     """The package must publish its version."""
-    assert __version__ == "0.1.0"
+    assert __version__ == "0.1.1"
     assert __license__ == "AGPL-3.0-or-later"
 
 

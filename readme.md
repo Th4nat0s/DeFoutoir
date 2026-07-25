@@ -33,7 +33,7 @@ DeFoutoir can scan several input folders in one operation.
 Repeat the `--input` option for each folder:
 
 ```bash
-python -m defoutoir \
+python defoutoir.py \
   --input ./phone-media \
   --input ./camera-media \
   --input ./old-media \
@@ -52,7 +52,7 @@ not created or changed.
 Example:
 
 ```bash
-python -m defoutoir --input ./unstructured-media --output ./sorted-media --dry-run
+python defoutoir.py --input ./unstructured-media --output ./sorted-media --dry-run
 ```
 
 When the result is correct, run the command without `--dry-run` to apply the operation.
@@ -66,7 +66,7 @@ This mode is useful for preparing the database before a later organization opera
 Example:
 
 ```bash
-python -m defoutoir --input ./unstructured-media --learn
+python defoutoir.py --input ./unstructured-media --learn
 ```
 
 Learn mode only reads the media files and updates the database. It does not change the input or output folders.
@@ -84,13 +84,13 @@ DeFoutoir can:
 Default copy:
 
 ```bash
-python -m defoutoir --input ./unstructured-media --output ./sorted-media
+python defoutoir.py --input ./unstructured-media --output ./sorted-media
 ```
 
 Explicit move:
 
 ```bash
-python -m defoutoir --input ./unstructured-media --output ./sorted-media --move
+python defoutoir.py --input ./unstructured-media --output ./sorted-media --move
 ```
 
 Move removes a source only after its destination has been written
@@ -160,7 +160,7 @@ DeFoutoir requires Python 3.10 or newer.
 Install the package from a checkout and its runtime dependencies with:
 
 ```bash
-python -m pip install .
+python -m pip install -r requirements.txt
 ```
 
 Create a virtual environment and install the project with its development
@@ -170,14 +170,14 @@ tools:
 python3.10 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 python -m pip install -e ".[dev]"
 ```
 
 The package provides both module and console entry points:
 
 ```bash
-python -m defoutoir --help
-defoutoir --help
+python defoutoir.py --help
 ```
 
 ## Quality checks

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1 - 2026-07-25
+
+- Added the standalone `defoutoir.py` launcher.
+- Added a simple runtime `requirements.txt` installation path.
+
 ## 0.1.0 - 2026-07-25
 
 - Added recursive media discovery for pictures and movies.

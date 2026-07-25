@@ -30,8 +30,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="defoutoir",
         description="Clean and sort pictures and movies by date.",
         epilog=(
-            "Examples: defoutoir --input ./media --output ./sorted; "
-            "defoutoir --input ./media --learn"
+            "Examples: python defoutoir.py --input ./media --output ./sorted; "
+            "python defoutoir.py --input ./media --learn"
         ),
     )
     parser.add_argument(
