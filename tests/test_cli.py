@@ -7,8 +7,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 from defoutoir import __license__, __version__
 from defoutoir.cli import main
 
@@ -211,9 +209,37 @@ def test_dry_run_does_not_change_existing_database(tmp_path: Path) -> None:
     assert database.read_bytes() == before
 
 
-def test_main_without_input_uses_argparse_validation() -> None:
-    """Argparse must retain its standard validation exit code."""
-    with pytest.raises(SystemExit) as error:
-        main([])
+def test_main_without_input_returns_validation_error(capsys) -> None:
+    """A processing command must explain that input is required."""
+    assert main([]) == 2
+    assert "--input is required" in capsys.readouterr().err
 
-    assert error.value.code == 2
+
+def test_list_prints_name_hash_date_and_source(tmp_path: Path, capsys) -> None:
+    """List mode must read the catalog without requiring input paths."""
+    input_directory = tmp_path / "input"
+    input_directory.mkdir()
+    source = input_directory / "photo_20240102.jpg"
+    source.write_bytes(b"photo")
+    database = tmp_path / "catalog.sqlite3"
+    assert (
+        main(["--input", str(input_directory), "--learn", "--database", str(database)])
+        == 0
+    )
+    capsys.readouterr()
+
+    assert main(["--list", "--database", str(database)]) == 0
+    output = capsys.readouterr().out
+    assert "name\tsha1\tdate\tsource" in output
+    assert "photo_20240102.jpg" in output
+    assert "2024-01-02 00:00:00" in output
+    assert str(source) in output
+
+
+def test_list_missing_database_is_validation_error(tmp_path: Path, capsys) -> None:
+    """List mode must not create a missing catalog database."""
+    database = tmp_path / "missing.sqlite3"
+
+    assert main(["--list", "--database", str(database)]) == 2
+    assert "does not exist" in capsys.readouterr().err
+    assert not database.exists()

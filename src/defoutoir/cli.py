@@ -8,7 +8,12 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from defoutoir import __version__
-from defoutoir.catalog import CatalogError, MediaCatalog
+from defoutoir.catalog import (
+    CatalogError,
+    MediaCatalog,
+    MediaRecord,
+    read_catalog_records,
+)
 from defoutoir.executor import execute_organization_plan
 from defoutoir.learning import learn_media
 from defoutoir.log import configure_logging
@@ -43,7 +48,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--input",
         dest="input_directories",
         action="append",
-        required=True,
         metavar="DIRECTORY",
         help="input directory; repeat for multiple directories",
     )
@@ -59,6 +63,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path("defoutoir.sqlite3"),
         metavar="PATH",
         help="SQLite catalog path (default: defoutoir.sqlite3)",
+    )
+    parser.add_argument(
+        "--list",
+        dest="list_records",
+        action="store_true",
+        help="list name, SHA-1, date, and source path from the catalog",
     )
     parser.add_argument(
         "--move",
@@ -91,7 +101,9 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(  # pylint: disable=too-many-return-statements
+    argv: Sequence[str] | None = None,
+) -> int:
     """Run the complete DeFoutoir workflow and return a stable exit code."""
     parser = build_parser()
     try:
@@ -111,6 +123,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     logger.info("Starting DeFoutoir.")
 
     try:
+        if arguments.list_records:
+            records = read_catalog_records(arguments.database)
+            _print_catalog_records(records)
+            logger.info("Listed %d catalog records.", len(records))
+            return EXIT_SUCCESS
+
         discovery = discover_media(arguments.input_directories, logger)
         database_path = ":memory:" if arguments.dry_run else arguments.database
         with MediaCatalog(database_path, logger) as catalog:
@@ -148,8 +166,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         return EXIT_PROCESSING_ERROR
 
 
-def _validate_arguments(arguments: argparse.Namespace) -> None:
+def _validate_arguments(  # pylint: disable=too-many-branches
+    arguments: argparse.Namespace,
+) -> None:
     """Validate paths and incompatible modes before opening the catalog."""
+    if arguments.list_records:
+        if arguments.input_directories:
+            raise CLIValidationError("--list cannot be combined with --input")
+        if arguments.output or arguments.move or arguments.dry_run or arguments.learn:
+            raise CLIValidationError(
+                "--list cannot be combined with --output, --move, --dry-run, or --learn"
+            )
+        if not arguments.database.is_file():
+            raise CLIValidationError(
+                f"Catalog database does not exist: {arguments.database}"
+            )
+        return
+
+    if not arguments.input_directories:
+        raise CLIValidationError("--input is required unless --list is used")
     input_paths = tuple(
         Path(value).expanduser() for value in arguments.input_directories
     )
@@ -192,6 +227,16 @@ def _validate_arguments(arguments: argparse.Namespace) -> None:
 def _format_summary(summary: dict[str, int]) -> str:
     """Format action counts in deterministic order."""
     return ", ".join(f"{key}={summary[key]}" for key in sorted(summary)) or "none"
+
+
+def _print_catalog_records(records: tuple[MediaRecord, ...]) -> None:
+    """Print catalog records as stable tab-separated output."""
+    print("name\tsha1\tdate	source")
+    for record in records:
+        print(
+            f"{Path(record.source_path).name}\t{record.sha1}\t"
+            f"{record.media_date or '-'}\t{record.source_path}"
+        )
 
 
 def _log_dry_run_plan(plan: OrganizationPlan, logger: logging.Logger) -> None:

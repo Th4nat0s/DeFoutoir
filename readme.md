@@ -132,6 +132,14 @@ incremental SHA-1 identity, file size, modification timestamps, resolved media
 date, date source, and processing state. A SHA-1 index makes duplicate-content
 groups queryable without changing or deleting the original files.
 
+List the catalog without scanning or modifying anything:
+
+```bash
+python defoutoir.py --list --database ./defoutoir.sqlite3
+```
+
+The output contains `name`, `sha1`, `date`, and the normalized source path.
+
 ## Metadata date precedence
 
 The metadata extractor reads dates without modifying the source file. When

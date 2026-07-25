@@ -417,6 +417,32 @@ def calculate_sha1(path: str | Path) -> str:
     return digest.hexdigest()
 
 
+def read_catalog_records(database_path: str | Path) -> tuple[MediaRecord, ...]:
+    """Read catalog records without creating or changing the SQLite file."""
+    path = Path(database_path).expanduser().resolve(strict=False)
+    if not path.is_file():
+        raise CatalogError(f"Media catalog does not exist: {path}")
+
+    try:
+        connection = sqlite3.connect(
+            f"file:{path.as_posix()}?mode=ro",
+            uri=True,
+        )
+        rows = connection.execute("""
+            SELECT id, source_path, sha1, size_bytes, modified_ns,
+                   metadata_changed_ns, media_date, date_source,
+                   processing_state, created_at_ns, updated_at_ns
+            FROM media_files
+            ORDER BY source_path
+            """).fetchall()
+    except sqlite3.Error as error:
+        raise CatalogError(f"Could not read media catalog {path}: {error}") from error
+    finally:
+        if "connection" in locals():
+            connection.close()
+    return tuple(_row_to_record(row) for row in rows)
+
+
 def _create_snapshot(path: str | Path) -> _FileSnapshot:
     """Read file metadata and content identity before a catalog write."""
     try:
