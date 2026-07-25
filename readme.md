@@ -19,6 +19,14 @@ DeFoutoir:
 
 The original files are kept unless the move option is explicitly selected.
 
+## Organization plan
+
+The canonical destination layout is `YYYY/MM/DD/filename`. Media without a
+usable date goes into `unknown/filename`. Planning happens before file
+operations and does not create directories or modify files. Existing files
+with the same SHA-1 are marked as duplicates; a different file with the same
+name receives a deterministic `filename__<sha1-prefix>.ext` alternate name.
+
 ## Multiple input folders
 
 DeFoutoir can scan several input folders in one operation.
