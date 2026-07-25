@@ -1,0 +1,129 @@
+"""Extract explicit capture dates from media filenames."""
+
+from __future__ import annotations
+
+import logging
+import re
+from datetime import date, datetime, time
+from pathlib import Path
+from typing import NamedTuple
+
+from defoutoir.metadata import MetadataDate
+
+
+class FilenameDate(NamedTuple):
+    """A valid date found in a filename."""
+
+    value: date
+    source: str
+    pattern: str
+    raw_value: str
+
+
+class ResolvedDate(NamedTuple):
+    """The date selected from metadata or a filename fallback."""
+
+    value: datetime
+    source: str
+    raw_value: str
+    pattern: str | None
+
+
+_DATE_PATTERNS = (
+    (
+        "compact_yyyymmdd",
+        re.compile(r"(?<!\d)(?P<year>\d{4})(?P<month>\d{2})" + r"(?P<day>\d{2})(?!\d)"),
+    ),
+    (
+        "separated_yyyy_mm_dd",
+        re.compile(
+            r"(?<!\d)(?P<year>\d{4})(?P<separator>[-_.])"
+            r"(?P<month>\d{2})(?P=separator)(?P<day>\d{2})(?!\d)"
+        ),
+    ),
+)
+
+
+def extract_filename_date(
+    path: Path, logger: logging.Logger | None = None
+) -> FilenameDate | None:
+    """Return an unambiguous valid date explicitly present in ``path.name``."""
+
+    active_logger = logger or logging.getLogger(__name__)
+    filename = path.name
+    candidates: list[FilenameDate] = []
+    saw_date_like_value = False
+
+    for pattern, expression in _DATE_PATTERNS:
+        for match in expression.finditer(filename):
+            saw_date_like_value = True
+            raw_value = match.group(0)
+            try:
+                value = date(
+                    int(match.group("year")),
+                    int(match.group("month")),
+                    int(match.group("day")),
+                )
+            except ValueError:
+                active_logger.warning(
+                    "Ignoring invalid date-like value %s in filename %s",
+                    raw_value,
+                    filename,
+                )
+                continue
+            candidates.append(
+                FilenameDate(
+                    value=value,
+                    source=f"filename.{pattern}",
+                    pattern=pattern,
+                    raw_value=raw_value,
+                )
+            )
+
+    distinct_dates = {candidate.value for candidate in candidates}
+    if len(distinct_dates) > 1:
+        active_logger.warning(
+            "Ignoring ambiguous dates in filename %s: %s",
+            filename,
+            ", ".join(sorted(str(value) for value in distinct_dates)),
+        )
+        return None
+    if not candidates:
+        if saw_date_like_value:
+            active_logger.warning("No valid date found in filename %s", filename)
+        return None
+
+    result = candidates[0]
+    active_logger.info(
+        "Using filename date %s from %s (%s)",
+        result.value,
+        filename,
+        result.pattern,
+    )
+    return result
+
+
+def resolve_media_date(
+    path: Path,
+    metadata_date: MetadataDate | None,
+    logger: logging.Logger | None = None,
+) -> ResolvedDate | None:
+    """Prefer a metadata date and use the filename date only as a fallback."""
+
+    if metadata_date is not None:
+        return ResolvedDate(
+            value=metadata_date.value,
+            source=metadata_date.source,
+            raw_value=metadata_date.raw_value,
+            pattern=None,
+        )
+
+    filename_date = extract_filename_date(path, logger=logger)
+    if filename_date is None:
+        return None
+    return ResolvedDate(
+        value=datetime.combine(filename_date.value, time.min),
+        source=filename_date.source,
+        raw_value=filename_date.raw_value,
+        pattern=filename_date.pattern,
+    )

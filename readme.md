@@ -113,8 +113,15 @@ several timestamps are available, it uses this order:
 4. container creation date from RAW or video metadata.
 
 Dates are normalized to UTC when a timezone is present. Invalid or missing
-metadata produces a warning or a clean no-date result so filename fallback can
-run in a later roadmap task.
+metadata produces a warning or a clean no-date result.
+
+## Filename date fallback
+
+When no usable metadata date exists, DeFoutoir can read an explicit date from
+the filename. The supported patterns are `YYYYMMDD`, `YYYY-MM-DD`,
+`YYYY_MM_DD`, and `YYYY.MM.DD`. Invalid dates, ambiguous short formats, and
+filenames containing multiple different dates are ignored. Metadata always
+takes precedence over a filename date.
 
 ## Development setup
 
