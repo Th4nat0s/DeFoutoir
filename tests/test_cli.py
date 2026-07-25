@@ -7,6 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from defoutoir.catalog import MediaCatalog
 from defoutoir import __license__, __version__
 from defoutoir.cli import main
 
@@ -154,7 +155,9 @@ def test_dry_run_move_preserves_source_and_database(tmp_path: Path) -> None:
     input_directory = tmp_path / "input"
     input_directory.mkdir()
     source = input_directory / "photo_20240102.jpg"
+    unknown = input_directory / "unknown.jpg"
     source.write_bytes(b"photo")
+    unknown.write_bytes(b"unknown")
     output = tmp_path / "output"
     database = tmp_path / "catalog.sqlite3"
 
@@ -220,7 +223,9 @@ def test_list_prints_name_hash_date_and_source(tmp_path: Path, capsys) -> None:
     input_directory = tmp_path / "input"
     input_directory.mkdir()
     source = input_directory / "photo_20240102.jpg"
+    unknown = input_directory / "unknown.jpg"
     source.write_bytes(b"photo")
+    unknown.write_bytes(b"unknown")
     database = tmp_path / "catalog.sqlite3"
     assert (
         main(["--input", str(input_directory), "--learn", "--database", str(database)])
@@ -235,6 +240,18 @@ def test_list_prints_name_hash_date_and_source(tmp_path: Path, capsys) -> None:
     assert "2024-01-02 00:00:00" in output
     assert "filename.compact_yyyymmdd" in output
     assert str(source) in output
+
+    assert main(["--list-no-date", "--database", str(database)]) == 0
+    no_date_output = capsys.readouterr().out
+    assert "unknown.jpg" in no_date_output
+    assert "photo_20240102.jpg" not in no_date_output
+
+    with MediaCatalog(database) as catalog:
+        catalog.update_processing_state(source, "error")
+    assert main(["--list-errors", "--database", str(database)]) == 0
+    errors_output = capsys.readouterr().out
+    assert "photo_20240102.jpg" in errors_output
+    assert "unknown.jpg" not in errors_output
 
 
 def test_list_missing_database_is_validation_error(tmp_path: Path, capsys) -> None:

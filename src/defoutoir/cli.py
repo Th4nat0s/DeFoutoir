@@ -64,11 +64,27 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help="SQLite catalog path (default: defoutoir.sqlite3)",
     )
-    parser.add_argument(
+    list_modes = parser.add_mutually_exclusive_group()
+    list_modes.add_argument(
         "--list",
-        dest="list_records",
-        action="store_true",
-        help="list name, SHA-1, date, and source path from the catalog",
+        dest="list_mode",
+        action="store_const",
+        const="all",
+        help="list all catalog records",
+    )
+    list_modes.add_argument(
+        "--list-no-date",
+        dest="list_mode",
+        action="store_const",
+        const="no-date",
+        help="list records without a resolved date",
+    )
+    list_modes.add_argument(
+        "--list-errors",
+        dest="list_mode",
+        action="store_const",
+        const="errors",
+        help="list records in error state",
     )
     parser.add_argument(
         "--move",
@@ -123,8 +139,9 @@ def main(  # pylint: disable=too-many-return-statements
     logger.info("Starting DeFoutoir.")
 
     try:
-        if arguments.list_records:
+        if arguments.list_mode:
             records = read_catalog_records(arguments.database)
+            records = _filter_catalog_records(records, arguments.list_mode)
             _print_catalog_records(records)
             logger.info("Listed %d catalog records.", len(records))
             return EXIT_SUCCESS
@@ -170,7 +187,7 @@ def _validate_arguments(  # pylint: disable=too-many-branches
     arguments: argparse.Namespace,
 ) -> None:
     """Validate paths and incompatible modes before opening the catalog."""
-    if arguments.list_records:
+    if arguments.list_mode:
         if arguments.input_directories:
             raise CLIValidationError("--list cannot be combined with --input")
         if arguments.output or arguments.move or arguments.dry_run or arguments.learn:
@@ -237,6 +254,17 @@ def _print_catalog_records(records: tuple[MediaRecord, ...]) -> None:
             f"{record.media_date or '-'}\t{record.date_source or '-'}\t"
             f"{Path(record.source_path).name}\t{record.sha1}\t{record.source_path}"
         )
+
+
+def _filter_catalog_records(
+    records: tuple[MediaRecord, ...], list_mode: str
+) -> tuple[MediaRecord, ...]:
+    """Select catalog records for a read-only list mode."""
+    if list_mode == "no-date":
+        return tuple(record for record in records if record.media_date is None)
+    if list_mode == "errors":
+        return tuple(record for record in records if record.processing_state == "error")
+    return records
 
 
 def _log_dry_run_plan(plan: OrganizationPlan, logger: logging.Logger) -> None:

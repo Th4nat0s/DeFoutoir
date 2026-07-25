@@ -142,6 +142,13 @@ python defoutoir.py --list --database ./defoutoir.sqlite3
 The output contains the selected `timestamp`, its `date_source`, `name`,
 `sha1`, and the normalized `pathname`.
 
+Show only files without a resolved date, or files that ended in an error:
+
+```bash
+python defoutoir.py --list-no-date --database ./defoutoir.sqlite3
+python defoutoir.py --list-errors --database ./defoutoir.sqlite3
+```
+
 ## Metadata date precedence
 
 The metadata extractor reads dates without modifying the source file. When
