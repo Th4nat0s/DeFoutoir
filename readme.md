@@ -151,7 +151,8 @@ python defoutoir.py --list-duplicates --database ./defoutoir.sqlite3
 ```
 
 `--list-duplicates` shows every cataloged file whose SHA-1 is shared by at
-least one other file.
+least one other file. Entries are sorted by SHA-1, so each duplicate group is
+contiguous.
 
 ## Metadata date precedence
 

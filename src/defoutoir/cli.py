@@ -275,7 +275,10 @@ def _filter_catalog_records(
         return tuple(record for record in records if record.processing_state == "error")
     if list_mode == "duplicates":
         counts = Counter(record.sha1 for record in records)
-        return tuple(record for record in records if counts[record.sha1] > 1)
+        duplicates = (record for record in records if counts[record.sha1] > 1)
+        return tuple(
+            sorted(duplicates, key=lambda record: (record.sha1, record.source_path))
+        )
     return records
 
 

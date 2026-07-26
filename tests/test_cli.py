@@ -280,6 +280,10 @@ def test_list_duplicates_prints_all_records_with_shared_hash(
     assert "first_20240102.jpg" in output
     assert "second_20240103.jpg" in output
     assert "unique_20240104.jpg" not in output
+    duplicate_lines = [line for line in output.splitlines() if "_2024010" in line]
+    assert ["first_20240102.jpg", "second_20240103.jpg"] == [
+        line.split("\t")[2] for line in duplicate_lines
+    ]
 
 
 def test_list_missing_database_is_validation_error(tmp_path: Path, capsys) -> None:
