@@ -147,7 +147,11 @@ Show only files without a resolved date, or files that ended in an error:
 ```bash
 python defoutoir.py --list-no-date --database ./defoutoir.sqlite3
 python defoutoir.py --list-errors --database ./defoutoir.sqlite3
+python defoutoir.py --list-duplicates --database ./defoutoir.sqlite3
 ```
+
+`--list-duplicates` shows every cataloged file whose SHA-1 is shared by at
+least one other file.
 
 ## Metadata date precedence
 

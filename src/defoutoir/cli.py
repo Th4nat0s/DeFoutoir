@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -85,6 +86,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_const",
         const="errors",
         help="list records in error state",
+    )
+    list_modes.add_argument(
+        "--list-duplicates",
+        dest="list_mode",
+        action="store_const",
+        const="duplicates",
+        help="list records whose SHA-1 is shared by multiple files",
     )
     parser.add_argument(
         "--move",
@@ -189,10 +197,11 @@ def _validate_arguments(  # pylint: disable=too-many-branches
     """Validate paths and incompatible modes before opening the catalog."""
     if arguments.list_mode:
         if arguments.input_directories:
-            raise CLIValidationError("--list cannot be combined with --input")
+            raise CLIValidationError("a list option cannot be combined with --input")
         if arguments.output or arguments.move or arguments.dry_run or arguments.learn:
             raise CLIValidationError(
-                "--list cannot be combined with --output, --move, --dry-run, or --learn"
+                "a list option cannot be combined with --output, --move, "
+                "--dry-run, or --learn"
             )
         if not arguments.database.is_file():
             raise CLIValidationError(
@@ -264,6 +273,9 @@ def _filter_catalog_records(
         return tuple(record for record in records if record.media_date is None)
     if list_mode == "errors":
         return tuple(record for record in records if record.processing_state == "error")
+    if list_mode == "duplicates":
+        counts = Counter(record.sha1 for record in records)
+        return tuple(record for record in records if counts[record.sha1] > 1)
     return records
 
 

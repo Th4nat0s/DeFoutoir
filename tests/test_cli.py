@@ -254,6 +254,34 @@ def test_list_prints_name_hash_date_and_source(tmp_path: Path, capsys) -> None:
     assert "unknown.jpg" not in errors_output
 
 
+def test_list_duplicates_prints_all_records_with_shared_hash(
+    tmp_path: Path, capsys
+) -> None:
+    """Duplicate list mode returns every path sharing a content hash."""
+    input_directory = tmp_path / "input"
+    input_directory.mkdir()
+    first = input_directory / "first_20240102.jpg"
+    second = input_directory / "second_20240103.jpg"
+    unique = input_directory / "unique_20240104.jpg"
+    first.write_bytes(b"same content")
+    second.write_bytes(b"same content")
+    unique.write_bytes(b"different content")
+    database = tmp_path / "catalog.sqlite3"
+
+    assert (
+        main(["--input", str(input_directory), "--learn", "--database", str(database)])
+        == 0
+    )
+    capsys.readouterr()
+
+    assert main(["--list-duplicates", "--database", str(database)]) == 0
+    output = capsys.readouterr().out
+    assert "timestamp\tdate_source\tname\tsha1\tpathname" in output
+    assert "first_20240102.jpg" in output
+    assert "second_20240103.jpg" in output
+    assert "unique_20240104.jpg" not in output
+
+
 def test_list_missing_database_is_validation_error(tmp_path: Path, capsys) -> None:
     """List mode must not create a missing catalog database."""
     database = tmp_path / "missing.sqlite3"
