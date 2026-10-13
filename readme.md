@@ -98,6 +98,36 @@ successfully. Existing destination files are never overwritten; identical
 content is skipped and different content receives a deterministic alternate
 name.
 
+### Add missing EXIF dates
+
+Use `--dateunk` with the normal copy operation or with `--move` to write a
+date detected from the filename or source path into the destination image's
+EXIF `DateTimeOriginal` tag. A valid existing metadata date is never replaced.
+JPEG and PNG files are updated without re-encoding their pixels. Other media
+formats are organized normally and produce a warning when their date cannot be
+written as EXIF.
+When only a calendar date is known, DeFoutoir uses `12:00:00` for the missing
+time. For example, `photo_2024-05-06.jpg` receives EXIF `DateTimeOriginal`
+`2024:05:06 12:00:00`. An explicit time, including midnight, is preserved.
+
+Copy and enrich the destination while keeping the source unchanged:
+
+```bash
+python defoutoir.py --input ./media --output ./sorted --dateunk
+```
+
+Move and enrich the destination:
+
+```bash
+python defoutoir.py --input ./media --output ./sorted --move --dateunk
+```
+
+Preview both the organization and EXIF updates without changing any file:
+
+```bash
+python defoutoir.py --input ./media --output ./sorted --dateunk --dry-run
+```
+
 ## Supported media discovery
 
 The discovery layer scans every input directory recursively and accepts
@@ -165,8 +195,9 @@ several timestamps are available, it uses this order:
 4. generic EXIF `DateTime`;
 5. container creation date from RAW or video metadata.
 
-Dates are normalized to UTC when a timezone is present. Invalid or missing
-metadata produces a warning or a clean no-date result.
+Dates are normalized to UTC when a timezone is present. A date-only metadata
+value uses `12:00:00`. Invalid or missing metadata produces a warning or a
+clean no-date result.
 
 ## Filename date fallback
 
@@ -177,6 +208,8 @@ follows the date as `HHMMSS` (for example `IMG_20240102_123456.JPG`) or as
 `at HH.MM.SS` (for example a WhatsApp export). Invalid dates, ambiguous short
 formats, and filenames containing multiple different dates are ignored.
 Metadata always takes precedence over a filename date.
+When the filename or source path supplies only a date, the catalog records
+`12:00:00`; a filename with an explicit time keeps that time.
 
 ## Development setup
 

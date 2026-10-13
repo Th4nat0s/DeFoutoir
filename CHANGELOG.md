@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Use noon (`12:00:00`) for dates without a known time in filenames, paths,
+  and date-only metadata; preserve explicit times.
+- Add `--dateunk` to write filename/path fallback dates to missing destination
+  EXIF metadata during copy or move operations, including dry-run previews.
+- Read XMP metadata in bounded chunks to avoid loading complete RAW and video
+  files into memory.
+- Reuse persisted metadata for unchanged files so interrupted runs can resume
+  without repeating completed metadata extraction.
+
 ## 0.1.2 - 2026-07-25
 
 - Added read-only `--list` output with timestamp, date source, name, SHA-1,

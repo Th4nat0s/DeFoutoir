@@ -105,6 +105,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="build and display the plan without changing files",
     )
     parser.add_argument(
+        "--dateunk",
+        action="store_true",
+        help="add a detected date to missing destination EXIF metadata",
+    )
+    parser.add_argument(
         "--learn",
         action="store_true",
         help="catalog media and dates without organizing files",
@@ -171,7 +176,13 @@ def main(  # pylint: disable=too-many-return-statements
                 return EXIT_PROCESSING_ERROR if catalog_errors else EXIT_SUCCESS
 
             operation = "move" if arguments.move else "copy"
-            plan = build_organization_plan(records, arguments.output, operation, logger)
+            plan = build_organization_plan(
+                records,
+                arguments.output,
+                operation,
+                logger,
+                date_unknown=arguments.dateunk,
+            )
             if arguments.dry_run:
                 _log_dry_run_plan(plan, logger)
                 logger.info("Dry run complete: %s", _format_summary(plan.summary))
@@ -198,10 +209,16 @@ def _validate_arguments(  # pylint: disable=too-many-branches
     if arguments.list_mode:
         if arguments.input_directories:
             raise CLIValidationError("a list option cannot be combined with --input")
-        if arguments.output or arguments.move or arguments.dry_run or arguments.learn:
+        if (
+            arguments.output
+            or arguments.move
+            or arguments.dry_run
+            or arguments.learn
+            or arguments.dateunk
+        ):
             raise CLIValidationError(
                 "a list option cannot be combined with --output, --move, "
-                "--dry-run, or --learn"
+                "--dry-run, --learn, or --dateunk"
             )
         if not arguments.database.is_file():
             raise CLIValidationError(
@@ -230,6 +247,8 @@ def _validate_arguments(  # pylint: disable=too-many-branches
         raise CLIValidationError("--move cannot be combined with --learn")
     if arguments.learn and arguments.dry_run:
         raise CLIValidationError("--dry-run cannot be combined with --learn")
+    if arguments.learn and arguments.dateunk:
+        raise CLIValidationError("--dateunk cannot be combined with --learn")
     if not arguments.learn and arguments.output is None:
         raise CLIValidationError("--output is required unless --learn is used")
     if arguments.output is None:
@@ -293,3 +312,9 @@ def _log_dry_run_plan(plan: OrganizationPlan, logger: logging.Logger) -> None:
             destination,
             entry.reason,
         )
+        if entry.exif_date is not None:
+            logger.info(
+                "DRY-RUN EXIF DateTimeOriginal: %s -> %s",
+                entry.exif_date.isoformat(sep=" "),
+                destination,
+            )

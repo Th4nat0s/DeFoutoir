@@ -100,11 +100,11 @@ def test_resolve_media_date_prefers_metadata(monkeypatch: pytest.MonkeyPatch) ->
     assert result.source == metadata_date.source
 
 
-def test_resolve_media_date_uses_filename_at_midnight() -> None:
+def test_resolve_media_date_uses_noon_for_date_only_filename() -> None:
     result = filename_dates.resolve_media_date(Path("IMG_2024-01-03.jpg"), None)
 
     assert result is not None
-    assert result.value == datetime(2024, 1, 3)
+    assert result.value == datetime(2024, 1, 3, 12)
     assert result.source == "filename.separated_yyyy_mm_dd"
     assert result.pattern == "separated_yyyy_mm_dd"
 
@@ -132,5 +132,5 @@ def test_resolve_media_date_uses_path_after_filename() -> None:
     )
 
     assert result is not None
-    assert result.value == datetime(2002, 2, 8)
+    assert result.value == datetime(2002, 2, 8, 12)
     assert result.source == "path.year_mmdd"

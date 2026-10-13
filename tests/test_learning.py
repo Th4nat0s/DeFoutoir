@@ -17,7 +17,7 @@ def test_first_and_repeated_learn_are_classified(tmp_path: Path) -> None:
 
         assert first.summary == {"learned": 1}
         assert repeated.summary == {"unchanged": 1}
-        assert repeated.records[0].media_date == "2024-01-02 00:00:00"
+        assert repeated.records[0].media_date == "2024-01-02 12:00:00"
 
 
 def test_changed_file_is_updated(tmp_path: Path) -> None:
@@ -30,6 +30,22 @@ def test_changed_file_is_updated(tmp_path: Path) -> None:
         result = learn_media((source,), (tmp_path,), catalog)
 
         assert result.summary == {"updated": 1}
+
+
+def test_unchanged_file_reuses_persisted_metadata(tmp_path: Path, monkeypatch) -> None:
+    """A resumed run must not extract metadata again for an unchanged file."""
+    source = tmp_path / "photo.jpg"
+    source.write_bytes(b"photo")
+    with MediaCatalog(":memory:") as catalog:
+        learn_media((source,), (tmp_path,), catalog)
+
+        def fail_metadata(*_args, **_kwargs):
+            raise AssertionError("metadata extraction should be skipped")
+
+        monkeypatch.setattr("defoutoir.learning.extract_media_date", fail_metadata)
+        result = learn_media((source,), (tmp_path,), catalog)
+
+        assert result.summary == {"unchanged": 1}
 
 
 def test_duplicate_files_are_explicitly_classified(tmp_path: Path) -> None:

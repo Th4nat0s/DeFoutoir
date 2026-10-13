@@ -215,7 +215,7 @@ def resolve_media_date(
         return None
     return ResolvedDate(
         value=datetime.combine(
-            filename_date.value, filename_date.capture_time or time.min
+            filename_date.value, filename_date.capture_time or time(12, 0)
         ),
         source=filename_date.source,
         raw_value=filename_date.raw_value,

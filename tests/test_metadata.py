@@ -1,9 +1,11 @@
 """Tests for capture-date metadata extraction."""
 
+# pylint: disable=protected-access
+
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -109,6 +111,14 @@ def test_iso_and_timezone_dates_are_normalized() -> None:
     )
 
 
+def test_date_only_metadata_uses_noon_but_explicit_midnight_is_preserved() -> None:
+    """Only an absent time is replaced with noon."""
+    assert parse_metadata_date(date(2024, 5, 6)) == datetime(2024, 5, 6, 12)
+    assert parse_metadata_date("2024-05-06") == datetime(2024, 5, 6, 12)
+    assert parse_metadata_date("20240506") == datetime(2024, 5, 6, 12)
+    assert parse_metadata_date("2024-05-06T00:00:00") == datetime(2024, 5, 6)
+
+
 def test_invalid_or_missing_metadata_returns_none(caplog) -> None:
     """Files without a usable date must return None without raising."""
     path = FIXTURE_ROOT / "jpeg" / "hopper.jpg"
@@ -164,6 +174,24 @@ def test_movie_metadata_adapter_can_supply_a_date(
     assert result is not None
     assert result.value == expected
     assert result.source == "metadata.container.creation_date"
+
+
+def test_xmp_metadata_is_read_in_bounded_chunks(tmp_path: Path) -> None:
+    """XMP extraction must find tags without loading the whole media file."""
+    movie_path = tmp_path / "large.mp4"
+    prefix = b"x" * (metadata_module.XMP_READ_CHUNK_SIZE - 8)
+    movie_path.write_bytes(
+        prefix
+        + b'photoshop:DateCreated="2024-07-29"'
+        + b"x" * (metadata_module.XMP_READ_CHUNK_SIZE * 2)
+    )
+
+    candidates = metadata_module._extract_xmp_candidates(
+        movie_path, logging.getLogger("tests.metadata")
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].value == datetime(2024, 7, 29, 12)
 
 
 def test_invalid_movie_container_does_not_write_hachoir_warnings(

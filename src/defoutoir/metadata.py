@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from contextlib import contextmanager, redirect_stderr
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timezone
 from io import StringIO
 from pathlib import Path
 from typing import NamedTuple
@@ -35,6 +35,9 @@ XMP_DATE_PATTERNS = (
     (b"xmp:CreateDate", "metadata.xmp.create_date", 2),
     (b"exif:DateTimeOriginal", "metadata.xmp.datetime_original", 0),
 )
+XMP_READ_CHUNK_SIZE = 64 * 1024
+XMP_MATCH_OVERLAP = 1024
+XMP_VALUE_MAX_SIZE = 256
 
 
 class MetadataDate(NamedTuple):
@@ -94,7 +97,7 @@ def parse_metadata_date(value: object) -> datetime | None:
     if isinstance(value, datetime):
         parsed = value
     elif isinstance(value, date):
-        parsed = datetime.combine(value, datetime.min.time())
+        parsed = datetime.combine(value, time(12, 0))
     else:
         if isinstance(value, bytes):
             value = value.decode("ascii", errors="replace")
@@ -210,25 +213,15 @@ def _extract_xmp_candidates(
     logger: logging.Logger,
 ) -> tuple[_DateCandidate, ...]:
     """Read capture-oriented XMP dates embedded in RAW/container files."""
-    try:
-        content = path.read_bytes()
-    except OSError as error:
-        logger.debug("Could not inspect XMP metadata in %s: %s", path, error)
+    raw_values = _read_xmp_values(path, logger)
+    if raw_values is None:
         return ()
 
     candidates: list[_DateCandidate] = []
     for tag, source, priority in XMP_DATE_PATTERNS:
-        expression = re.compile(
-            rb"(?:"
-            + re.escape(tag)
-            + rb"\s*=\s*['\"]([^'\"]+)['\"]|"
-            + re.escape(tag)
-            + rb"\s+([^\s>]+))"
-        )
-        match = expression.search(content)
-        if match is None:
+        raw_value = raw_values.get(tag)
+        if raw_value is None:
             continue
-        raw_value = next((value for value in match.groups() if value), b"")
         parsed = parse_metadata_date(raw_value)
         if parsed is None:
             logger.warning("Ignoring invalid XMP date in %s: %r", path, raw_value)
@@ -242,6 +235,48 @@ def _extract_xmp_candidates(
             )
         )
     return tuple(candidates)
+
+
+def _read_xmp_values(
+    path: Path,
+    logger: logging.Logger,
+) -> dict[bytes, bytes] | None:
+    """Read XMP values with a fixed-size rolling buffer."""
+    expressions = {
+        tag: re.compile(
+            (
+                rb"(?:"
+                + re.escape(tag)
+                + rb"\s*=\s*['\"]([^'\"]{1,%d})['\"]|"
+                + re.escape(tag)
+                + rb"\s+([^\s>]{1,%d}))"
+            )
+            % (XMP_VALUE_MAX_SIZE, XMP_VALUE_MAX_SIZE)
+        )
+        for tag, _source, _priority in XMP_DATE_PATTERNS
+    }
+    raw_values: dict[bytes, bytes] = {}
+    buffer = b""
+    try:
+        with path.open("rb") as stream:
+            while True:
+                chunk = stream.read(XMP_READ_CHUNK_SIZE)
+                if not chunk:
+                    break
+                buffer = buffer[-XMP_MATCH_OVERLAP:] + chunk
+                for tag, _source, _priority in XMP_DATE_PATTERNS:
+                    if tag not in raw_values:
+                        match = expressions[tag].search(buffer)
+                        if match is not None:
+                            raw_values[tag] = next(
+                                value for value in match.groups() if value
+                            )
+                if len(raw_values) == len(XMP_DATE_PATTERNS):
+                    break
+    except OSError as error:
+        logger.debug("Could not inspect XMP metadata in %s: %s", path, error)
+        return None
+    return raw_values
 
 
 @contextmanager
@@ -276,6 +311,12 @@ def _make_candidate(
 
 def _parse_date_text(text: str) -> datetime | None:
     """Parse EXIF colon-separated and ISO date representations."""
+    if re.fullmatch(r"(?:\d{4}-\d{2}-\d{2}|\d{8})", text):
+        try:
+            date_format = "%Y%m%d" if len(text) == 8 else "%Y-%m-%d"
+            return datetime.strptime(text, date_format).replace(hour=12)
+        except ValueError:
+            return None
     if len(text) >= 19 and text[4] == ":" and text[7] == ":":
         text = text[:19]
         try:
@@ -287,7 +328,4 @@ def _parse_date_text(text: str) -> datetime | None:
     try:
         return datetime.fromisoformat(normalized)
     except ValueError:
-        try:
-            return datetime.strptime(text, "%Y-%m-%d")
-        except ValueError:
-            return None
+        return None

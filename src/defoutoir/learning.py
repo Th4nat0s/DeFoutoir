@@ -30,12 +30,12 @@ def learn_media(
     """Hash, date, classify, and persist media without file operations."""
     active_logger = logger or get_logger("learning")
     records: list[MediaRecord] = []
-    statuses: list[str] = []
+    status_counts: Counter[str] = Counter()
     for media_path in media_files:
         record, status = _learn_one(media_path, catalog, active_logger)
         if record is not None:
             records.append(record)
-        statuses.append(status)
+        status_counts[status] += 1
 
     discovered_paths = {
         str(media_path.expanduser().resolve(strict=False)) for media_path in media_files
@@ -46,11 +46,12 @@ def learn_media(
         catalog,
         active_logger,
     )
-    statuses.extend("missing" for _ in range(missing_count))
+    if missing_count:
+        status_counts["missing"] += missing_count
     if discovery_warnings:
-        statuses.extend("warning" for _ in range(discovery_warnings))
+        status_counts["warning"] += discovery_warnings
 
-    summary = dict(Counter(statuses))
+    summary = dict(status_counts)
     active_logger.info("Learn complete: %s", _format_summary(summary))
     return LearnResult(tuple(records), summary)
 
@@ -62,19 +63,34 @@ def _learn_one(
 ) -> tuple[MediaRecord | None, str]:
     """Learn and classify one media file."""
     existing = catalog.get_by_path(media_path)
-    metadata_date = extract_media_date(media_path, logger)
-    resolved_date = resolve_media_date(media_path, metadata_date, logger)
-    media_date = resolved_date.value.isoformat(sep=" ") if resolved_date else None
-    date_source = resolved_date.source if resolved_date else None
     try:
-        record = catalog.record_file(
-            media_path,
-            media_date=media_date,
-            date_source=date_source,
-        )
+        record = catalog.record_file(media_path)
     except CatalogError as error:
         logger.error("Could not learn %s: %s", media_path, error)
         return None, "error"
+
+    metadata_is_current = (
+        existing is not None
+        and existing.sha1 == record.sha1
+        and existing.size_bytes == record.size_bytes
+        and existing.modified_ns == record.modified_ns
+        and existing.processing_state
+        in {"learned", "unchanged", "updated", "duplicate", "copied", "moved"}
+    )
+    if metadata_is_current:
+        record = existing
+    else:
+        metadata_date = extract_media_date(media_path, logger)
+        resolved_date = resolve_media_date(media_path, metadata_date, logger)
+        media_date = resolved_date.value.isoformat(sep=" ") if resolved_date else None
+        date_source = resolved_date.source if resolved_date else None
+        try:
+            record = catalog.update_media_date(
+                record.source_path, media_date, date_source
+            )
+        except CatalogError as error:
+            logger.error("Could not record metadata for %s: %s", media_path, error)
+            return None, "error"
 
     status = _classify_record(existing, record, catalog)
     try:

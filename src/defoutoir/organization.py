@@ -5,12 +5,13 @@ from __future__ import annotations
 import logging
 import hashlib
 from collections import Counter
-from datetime import date
+from datetime import date, datetime
 from enum import Enum
 from pathlib import Path
 from typing import NamedTuple
 
 from defoutoir.catalog import MediaRecord
+from defoutoir.exif_dates import calculate_dated_sha1, supports_exif_date
 from defoutoir.log import get_logger
 
 
@@ -32,6 +33,7 @@ class OrganizationPlanEntry(NamedTuple):
     action: PlanAction
     reason: str
     sha1: str
+    exif_date: datetime | None = None
 
 
 class OrganizationPlan(NamedTuple):
@@ -48,6 +50,7 @@ def build_organization_plan(
     output_directory: str | Path,
     operation: str = "copy",
     logger: logging.Logger | None = None,
+    date_unknown: bool = False,
 ) -> OrganizationPlan:
     """Build a plan without creating directories or changing any files."""
     active_logger = logger or get_logger("organization")
@@ -68,6 +71,7 @@ def build_organization_plan(
             requested_action,
             used_destinations,
             active_logger,
+            date_unknown,
         )
         entries.append(entry)
 
@@ -80,15 +84,33 @@ def build_organization_plan(
     return OrganizationPlan(output, requested_action, tuple(entries), summary)
 
 
-def _plan_record(
+def _plan_record(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     record: MediaRecord,
     output: Path,
     operation: PlanAction,
     used_destinations: dict[Path, str],
     logger: logging.Logger,
+    date_unknown: bool,
 ) -> OrganizationPlanEntry:
     """Plan one record and reserve its deterministic destination."""
     source = Path(record.source_path)
+    exif_date = _missing_exif_date(record, source, date_unknown, logger)
+    try:
+        output_sha1 = (
+            calculate_dated_sha1(source, exif_date)
+            if exif_date is not None
+            else record.sha1
+        )
+    except (OSError, ValueError) as error:
+        logger.error("Cannot prepare EXIF update for %s: %s", source, error)
+        return OrganizationPlanEntry(
+            source,
+            None,
+            PlanAction.ERROR,
+            f"cannot prepare EXIF update: {error}",
+            record.sha1,
+            exif_date,
+        )
     relative_directory = _date_directory(record.media_date)
     destination = _safe_destination(output, relative_directory / source.name)
     if destination is None:
@@ -97,13 +119,14 @@ def _plan_record(
             None,
             PlanAction.ERROR,
             "destination escapes output directory",
-            record.sha1,
+            output_sha1,
+            exif_date,
         )
 
     destination, reason = _resolve_collision(
-        destination, record.sha1, used_destinations
+        destination, output_sha1, used_destinations
     )
-    used_destinations[destination] = record.sha1
+    used_destinations[destination] = output_sha1
     if destination.exists() or reason == "same content is planned at destination":
         action = PlanAction.DUPLICATE
         reason = "same content is already at destination"
@@ -113,7 +136,32 @@ def _plan_record(
     else:
         action = operation
     logger.info("Planned %s: %s -> %s", action.value, source, destination)
-    return OrganizationPlanEntry(source, destination, action, reason, record.sha1)
+    return OrganizationPlanEntry(
+        source, destination, action, reason, output_sha1, exif_date
+    )
+
+
+def _missing_exif_date(
+    record: MediaRecord,
+    source: Path,
+    enabled: bool,
+    logger: logging.Logger,
+) -> datetime | None:
+    """Select a filename/path fallback date for supported undated images."""
+    if not enabled or not record.media_date or not record.date_source:
+        return None
+    if not record.date_source.startswith(("filename.", "path.")):
+        return None
+    if not supports_exif_date(source):
+        logger.warning(
+            "Cannot add the detected date to unsupported EXIF format: %s", source
+        )
+        return None
+    try:
+        return datetime.fromisoformat(record.media_date)
+    except ValueError:
+        logger.warning("Cannot add invalid catalog date to EXIF: %s", record.media_date)
+        return None
 
 
 def _date_directory(media_date: str | None) -> Path:

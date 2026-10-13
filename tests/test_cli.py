@@ -7,9 +7,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+from PIL import Image
+
 from defoutoir.catalog import MediaCatalog
 from defoutoir import __license__, __version__
 from defoutoir.cli import main
+from defoutoir.metadata import extract_media_date
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -132,6 +135,125 @@ def test_main_rejects_incompatible_learn_options(tmp_path: Path, capsys) -> None
     assert main(["--input", str(input_directory), "--learn", "--move"]) == 2
     assert "cannot be combined" in capsys.readouterr().err
     assert main(["--input", str(input_directory), "--learn", "--dry-run"]) == 2
+    assert main(["--input", str(input_directory), "--learn", "--dateunk"]) == 2
+
+
+def test_dateunk_copy_dates_destination_and_preserves_source(tmp_path: Path) -> None:
+    """Copy mode must enrich only a destination that lacks a metadata date."""
+    input_directory = tmp_path / "input"
+    input_directory.mkdir()
+    source = input_directory / "photo_20240102_030405.jpg"
+    Image.new("RGB", (8, 6), color="blue").save(source)
+    source_before = source.read_bytes()
+    output = tmp_path / "output"
+    command = [
+        "--input",
+        str(input_directory),
+        "--output",
+        str(output),
+        "--database",
+        str(tmp_path / "catalog.sqlite3"),
+        "--dateunk",
+    ]
+
+    assert main(command) == 0
+
+    destination = output / "2024/01/02" / source.name
+    result = extract_media_date(destination)
+    assert result is not None
+    assert result.value.isoformat(sep=" ") == "2024-01-02 03:04:05"
+    assert source.read_bytes() == source_before
+    assert extract_media_date(source) is None
+
+    assert main(command) == 0
+    assert not tuple(destination.parent.glob("photo_20240102_030405__*.jpg"))
+
+
+def test_dateunk_move_dates_destination_and_removes_source(tmp_path: Path) -> None:
+    """Move mode must publish the enriched file before removing its source."""
+    input_directory = tmp_path / "input"
+    input_directory.mkdir()
+    source = input_directory / "photo_2024-05-06.png"
+    Image.new("RGB", (8, 6), color="green").save(source)
+    output = tmp_path / "output"
+
+    assert (
+        main(
+            [
+                "--input",
+                str(input_directory),
+                "--output",
+                str(output),
+                "--move",
+                "--dateunk",
+            ]
+        )
+        == 0
+    )
+
+    destination = output / "2024/05/06" / source.name
+    assert not source.exists()
+    result = extract_media_date(destination)
+    assert result is not None
+    assert result.value.isoformat(sep=" ") == "2024-05-06 12:00:00"
+
+
+def test_dateunk_dry_run_reports_exif_without_writing(tmp_path: Path, capsys) -> None:
+    """Dry-run must preview the tag update and leave all files unchanged."""
+    input_directory = tmp_path / "input"
+    input_directory.mkdir()
+    source = input_directory / "photo_20240102.jpg"
+    Image.new("RGB", (8, 6), color="red").save(source)
+    before = source.read_bytes()
+    output = tmp_path / "output"
+
+    assert (
+        main(
+            [
+                "--input",
+                str(input_directory),
+                "--output",
+                str(output),
+                "--dateunk",
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
+
+    assert source.read_bytes() == before
+    assert extract_media_date(source) is None
+    assert not output.exists()
+    assert "DRY-RUN EXIF DateTimeOriginal" in capsys.readouterr().err
+
+
+def test_dateunk_never_replaces_existing_metadata_date(tmp_path: Path) -> None:
+    """An existing EXIF date must win over a conflicting filename date."""
+    input_directory = tmp_path / "input"
+    input_directory.mkdir()
+    source = input_directory / "photo_20240102.jpg"
+    exif = Image.Exif()
+    exif[36867] = "2001:02:03 04:05:06"
+    Image.new("RGB", (8, 6), color="purple").save(source, exif=exif)
+    output = tmp_path / "output"
+
+    assert (
+        main(
+            [
+                "--input",
+                str(input_directory),
+                "--output",
+                str(output),
+                "--dateunk",
+            ]
+        )
+        == 0
+    )
+
+    destination = output / "2001/02/03" / source.name
+    result = extract_media_date(destination)
+    assert result is not None
+    assert result.value.isoformat(sep=" ") == "2001-02-03 04:05:06"
 
 
 def test_main_dry_run_does_not_create_output(tmp_path: Path, capsys) -> None:
@@ -237,7 +359,7 @@ def test_list_prints_name_hash_date_and_source(tmp_path: Path, capsys) -> None:
     output = capsys.readouterr().out
     assert "timestamp\tdate_source\tname\tsha1\tpathname" in output
     assert "photo_20240102.jpg" in output
-    assert "2024-01-02 00:00:00" in output
+    assert "2024-01-02 12:00:00" in output
     assert "filename.compact_yyyymmdd" in output
     assert str(source) in output
 

@@ -321,9 +321,15 @@ class MediaCatalog:
                 size_bytes = excluded.size_bytes,
                 modified_ns = excluded.modified_ns,
                 metadata_changed_ns = excluded.metadata_changed_ns,
-                media_date = excluded.media_date,
-                date_source = excluded.date_source,
-                processing_state = excluded.processing_state,
+                media_date = COALESCE(excluded.media_date, media_files.media_date),
+                date_source = COALESCE(excluded.date_source, media_files.date_source),
+                processing_state = CASE
+                    WHEN media_files.sha1 = excluded.sha1
+                     AND media_files.size_bytes = excluded.size_bytes
+                     AND media_files.modified_ns = excluded.modified_ns
+                    THEN media_files.processing_state
+                    ELSE excluded.processing_state
+                END,
                 updated_at_ns = excluded.updated_at_ns
             """,
             (

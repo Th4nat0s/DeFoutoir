@@ -7,10 +7,12 @@ import os
 import shutil
 import tempfile
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 from typing import NamedTuple
 
 from defoutoir.catalog import CatalogError, MediaCatalog
+from defoutoir.exif_dates import write_missing_exif_date
 from defoutoir.log import get_logger
 from defoutoir.organization import OrganizationPlan, OrganizationPlanEntry, PlanAction
 
@@ -72,9 +74,9 @@ def _execute_entry(
 
     try:
         if plan_entry.action is PlanAction.COPY:
-            _copy_exclusive(plan_entry.source_path, plan_entry.destination_path)
+            _copy_plan_entry(plan_entry, logger)
         elif plan_entry.action is PlanAction.MOVE:
-            _copy_exclusive(plan_entry.source_path, plan_entry.destination_path)
+            _copy_plan_entry(plan_entry, logger)
             plan_entry.source_path.unlink()
         else:
             raise ValueError(f"unsupported plan action: {plan_entry.action}")
@@ -100,7 +102,27 @@ def _execute_entry(
     return ExecutionEntry(plan_entry, True, None)
 
 
-def _copy_exclusive(source: Path, destination: Path) -> None:
+def _copy_plan_entry(plan_entry: OrganizationPlanEntry, logger: logging.Logger) -> None:
+    """Copy one entry and apply its optional EXIF update before publication."""
+    if plan_entry.destination_path is None:
+        raise ValueError("planned destination is missing")
+    if plan_entry.exif_date is None:
+        _copy_exclusive(plan_entry.source_path, plan_entry.destination_path)
+        return
+    _copy_exclusive(
+        plan_entry.source_path,
+        plan_entry.destination_path,
+        plan_entry.exif_date,
+        logger,
+    )
+
+
+def _copy_exclusive(
+    source: Path,
+    destination: Path,
+    exif_date: datetime | None = None,
+    logger: logging.Logger | None = None,
+) -> None:
     """Copy with metadata while guaranteeing that an existing file stays intact."""
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary_path: Path | None = None
@@ -108,7 +130,8 @@ def _copy_exclusive(source: Path, destination: Path) -> None:
         with tempfile.NamedTemporaryFile(
             mode="wb",
             dir=destination.parent,
-            prefix=f".{destination.name}.",
+            prefix=f".{destination.stem}.",
+            suffix=destination.suffix,
             delete=False,
         ) as temporary:
             temporary_path = Path(temporary.name)
@@ -117,6 +140,8 @@ def _copy_exclusive(source: Path, destination: Path) -> None:
             temporary.flush()
             os.fsync(temporary.fileno())
         shutil.copystat(source, temporary_path)
+        if exif_date is not None:
+            write_missing_exif_date(temporary_path, exif_date, logger)
         os.link(temporary_path, destination)
     finally:
         if temporary_path is not None:
