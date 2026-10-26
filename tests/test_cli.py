@@ -334,6 +334,80 @@ def test_dry_run_does_not_change_existing_database(tmp_path: Path) -> None:
     assert database.read_bytes() == before
 
 
+def test_do_not_rescan_uses_database_without_discovery(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """Catalog-only dry-run must avoid discovery, hashing, and database writes."""
+    input_directory = tmp_path / "input"
+    input_directory.mkdir()
+    source = input_directory / "photo_20240102.jpg"
+    source.write_bytes(b"photo")
+    database = tmp_path / "catalog.sqlite3"
+    assert (
+        main(
+            [
+                "--input",
+                str(input_directory),
+                "--learn",
+                "--database",
+                str(database),
+            ]
+        )
+        == 0
+    )
+    before = database.read_bytes()
+    capsys.readouterr()
+
+    def fail_scan(*_args, **_kwargs):
+        raise AssertionError("discovery must be skipped")
+
+    def fail_dated_hash(*_args, **_kwargs):
+        raise AssertionError("destination hash must be deferred")
+
+    monkeypatch.setattr("defoutoir.cli.discover_media", fail_scan)
+    monkeypatch.setattr("defoutoir.organization.calculate_dated_sha1", fail_dated_hash)
+
+    assert (
+        main(
+            [
+                "--input",
+                str(input_directory),
+                "--output",
+                str(tmp_path / "output"),
+                "--database",
+                str(database),
+                "--dry-run",
+                "--dateunk",
+                "--do-not-rescan",
+            ]
+        )
+        == 0
+    )
+
+    assert database.read_bytes() == before
+    assert not (tmp_path / "output").exists()
+    messages = capsys.readouterr().err
+    assert "without scanning" in messages
+    assert "DRY-RUN EXIF DateTimeOriginal" in messages
+
+
+def test_do_not_rescan_requires_an_existing_database(tmp_path: Path, capsys) -> None:
+    """Catalog-only mode must explain when its sole data source is missing."""
+    assert (
+        main(
+            [
+                "--do-not-rescan",
+                "--database",
+                str(tmp_path / "missing.sqlite3"),
+                "--output",
+                str(tmp_path / "output"),
+            ]
+        )
+        == 2
+    )
+    assert "Catalog database does not exist" in capsys.readouterr().err
+
+
 def test_main_without_input_returns_validation_error(capsys) -> None:
     """A processing command must explain that input is required."""
     assert main([]) == 2

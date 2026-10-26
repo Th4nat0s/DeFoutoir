@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add `--do-not-rescan` to plan directly from an existing catalog, with an
+  optional `--input` path filter and read-only dry-run behavior.
+- Reuse cached SHA-1 and metadata for files whose size and filesystem times
+  have not changed.
 - Use noon (`12:00:00`) for dates without a known time in filenames, paths,
   and date-only metadata; preserve explicit times.
 - Add `--dateunk` to write filename/path fallback dates to missing destination

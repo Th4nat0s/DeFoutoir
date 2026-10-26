@@ -63,20 +63,27 @@ def _learn_one(
 ) -> tuple[MediaRecord | None, str]:
     """Learn and classify one media file."""
     existing = catalog.get_by_path(media_path)
-    try:
-        record = catalog.record_file(media_path)
-    except CatalogError as error:
-        logger.error("Could not learn %s: %s", media_path, error)
-        return None, "error"
-
-    metadata_is_current = (
-        existing is not None
-        and existing.sha1 == record.sha1
-        and existing.size_bytes == record.size_bytes
-        and existing.modified_ns == record.modified_ns
-        and existing.processing_state
-        in {"learned", "unchanged", "updated", "duplicate", "copied", "moved"}
+    identity_is_current = existing is not None and _matches_cached_file(
+        media_path, existing
     )
+    if identity_is_current:
+        record = existing
+        logger.info("Reusing cached file identity: %s", media_path)
+    else:
+        try:
+            record = catalog.record_file(media_path)
+        except CatalogError as error:
+            logger.error("Could not learn %s: %s", media_path, error)
+            return None, "error"
+
+    metadata_is_current = identity_is_current and existing.processing_state in {
+        "learned",
+        "unchanged",
+        "updated",
+        "duplicate",
+        "copied",
+        "moved",
+    }
     if metadata_is_current:
         record = existing
     else:
@@ -100,6 +107,21 @@ def _learn_one(
         return None, "error"
     logger.info("Learned %s: %s", status, media_path)
     return record, status
+
+
+def _matches_cached_file(media_path: Path, record: MediaRecord) -> bool:
+    """Match cheap filesystem identity fields before trusting cached content."""
+    try:
+        resolved = media_path.expanduser().resolve(strict=True)
+        details = resolved.stat()
+    except (OSError, RuntimeError):
+        return False
+    return (
+        str(resolved) == record.source_path
+        and details.st_size == record.size_bytes
+        and details.st_mtime_ns == record.modified_ns
+        and details.st_ctime_ns == record.metadata_changed_ns
+    )
 
 
 def _classify_record(

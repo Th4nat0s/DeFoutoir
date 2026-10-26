@@ -4,6 +4,7 @@
 
 from pathlib import Path
 
+import defoutoir.catalog as catalog_module
 from defoutoir.catalog import MediaCatalog
 from defoutoir.learning import learn_media
 
@@ -33,7 +34,7 @@ def test_changed_file_is_updated(tmp_path: Path) -> None:
 
 
 def test_unchanged_file_reuses_persisted_metadata(tmp_path: Path, monkeypatch) -> None:
-    """A resumed run must not extract metadata again for an unchanged file."""
+    """A resumed run must not hash or extract an unchanged file again."""
     source = tmp_path / "photo.jpg"
     source.write_bytes(b"photo")
     with MediaCatalog(":memory:") as catalog:
@@ -42,7 +43,11 @@ def test_unchanged_file_reuses_persisted_metadata(tmp_path: Path, monkeypatch) -
         def fail_metadata(*_args, **_kwargs):
             raise AssertionError("metadata extraction should be skipped")
 
+        def fail_hash(*_args, **_kwargs):
+            raise AssertionError("content hashing should be skipped")
+
         monkeypatch.setattr("defoutoir.learning.extract_media_date", fail_metadata)
+        monkeypatch.setattr(catalog_module, "calculate_sha1", fail_hash)
         result = learn_media((source,), (tmp_path,), catalog)
 
         assert result.summary == {"unchanged": 1}

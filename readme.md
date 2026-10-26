@@ -57,6 +57,28 @@ python defoutoir.py --input ./unstructured-media --output ./sorted-media --dry-r
 
 When the result is correct, run the command without `--dry-run` to apply the operation.
 
+### Use the catalog without rescanning
+
+Add `--do-not-rescan` to build the organization plan only from an existing
+SQLite catalog. DeFoutoir does not traverse input directories, hash source
+files, or extract metadata in this mode:
+
+```bash
+python defoutoir.py \
+  --database ./defoutoir.sqlite3 \
+  --output ./sorted-media \
+  --dry-run \
+  --dateunk \
+  --do-not-rescan
+```
+
+`--input` is optional with `--do-not-rescan`. When supplied, it filters the
+catalog records to paths below that input directory without scanning it.
+Because the catalog is trusted as-is, newly added, changed, or removed source
+files are not detected. Run `--learn` or a normal organization command first
+when the catalog needs refreshing. A dry run still keeps the SQLite database
+byte-for-byte unchanged.
+
 ## Learn mode
 
 The `--learn` option scans the input folder and learns the media information without copying or moving any files.
@@ -73,6 +95,8 @@ Learn mode only reads the media files and updates the database. It does not chan
 Each learned file is classified as `learned`, `updated`, `unchanged`, or
 `duplicate`; files previously cataloged but no longer present under the input
 folders are marked `missing`.
+On later scans, unchanged files reuse their stored SHA-1 and metadata when
+their size, modification time, and metadata-change time still match.
 
 ## File operations
 

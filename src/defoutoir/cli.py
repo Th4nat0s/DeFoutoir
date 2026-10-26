@@ -110,6 +110,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="add a detected date to missing destination EXIF metadata",
     )
     parser.add_argument(
+        "--do-not-rescan",
+        action="store_true",
+        help="use catalog records without scanning input directories",
+    )
+    parser.add_argument(
         "--learn",
         action="store_true",
         help="catalog media and dates without organizing files",
@@ -159,6 +164,15 @@ def main(  # pylint: disable=too-many-return-statements
             logger.info("Listed %d catalog records.", len(records))
             return EXIT_SUCCESS
 
+        if arguments.do_not_rescan:
+            records = read_catalog_records(arguments.database)
+            records = _filter_records_by_inputs(records, arguments.input_directories)
+            logger.info("Loaded %d catalog record(s) without scanning.", len(records))
+            if arguments.dry_run:
+                return _organize_records(records, arguments, None, logger)
+            with MediaCatalog(arguments.database, logger) as catalog:
+                return _organize_records(records, arguments, catalog, logger)
+
         discovery = discover_media(arguments.input_directories, logger)
         database_path = ":memory:" if arguments.dry_run else arguments.database
         with MediaCatalog(database_path, logger) as catalog:
@@ -174,29 +188,9 @@ def main(  # pylint: disable=too-many-return-statements
             if arguments.learn:
                 logger.info("Learn summary: %s", _format_summary(learning.summary))
                 return EXIT_PROCESSING_ERROR if catalog_errors else EXIT_SUCCESS
-
-            operation = "move" if arguments.move else "copy"
-            plan = build_organization_plan(
-                records,
-                arguments.output,
-                operation,
-                logger,
-                date_unknown=arguments.dateunk,
+            return _organize_records(
+                records, arguments, catalog, logger, catalog_errors
             )
-            if arguments.dry_run:
-                _log_dry_run_plan(plan, logger)
-                logger.info("Dry run complete: %s", _format_summary(plan.summary))
-                return EXIT_PROCESSING_ERROR if catalog_errors else EXIT_SUCCESS
-
-            result = execute_organization_plan(plan, catalog, logger)
-            if result.summary.get("error", 0) or catalog_errors:
-                logger.error(
-                    "Processing completed with errors: %s",
-                    _format_summary(result.summary),
-                )
-                return EXIT_PROCESSING_ERROR
-            logger.info("Processing complete: %s", _format_summary(result.summary))
-            return EXIT_SUCCESS
     except (CatalogError, OSError, RuntimeError) as error:
         logger.error("Processing failed: %s", error)
         return EXIT_PROCESSING_ERROR
@@ -209,16 +203,18 @@ def _validate_arguments(  # pylint: disable=too-many-branches
     if arguments.list_mode:
         if arguments.input_directories:
             raise CLIValidationError("a list option cannot be combined with --input")
-        if (
-            arguments.output
-            or arguments.move
-            or arguments.dry_run
-            or arguments.learn
-            or arguments.dateunk
-        ):
+        list_conflicts = (
+            arguments.output,
+            arguments.move,
+            arguments.dry_run,
+            arguments.learn,
+            arguments.dateunk,
+            arguments.do_not_rescan,
+        )
+        if any(list_conflicts):
             raise CLIValidationError(
                 "a list option cannot be combined with --output, --move, "
-                "--dry-run, --learn, or --dateunk"
+                "--dry-run, --learn, --dateunk, or --do-not-rescan"
             )
         if not arguments.database.is_file():
             raise CLIValidationError(
@@ -226,13 +222,18 @@ def _validate_arguments(  # pylint: disable=too-many-branches
             )
         return
 
-    if not arguments.input_directories:
-        raise CLIValidationError("--input is required unless --list is used")
+    if not arguments.input_directories and not arguments.do_not_rescan:
+        raise CLIValidationError(
+            "--input is required unless --list or --do-not-rescan is used"
+        )
     input_paths = tuple(
-        Path(value).expanduser() for value in arguments.input_directories
+        Path(value).expanduser() for value in (arguments.input_directories or ())
     )
     resolved_inputs: list[Path] = []
     for input_path in input_paths:
+        if arguments.do_not_rescan:
+            resolved_inputs.append(input_path.resolve(strict=False))
+            continue
         try:
             resolved = input_path.resolve(strict=True)
         except (OSError, RuntimeError) as error:
@@ -249,6 +250,12 @@ def _validate_arguments(  # pylint: disable=too-many-branches
         raise CLIValidationError("--dry-run cannot be combined with --learn")
     if arguments.learn and arguments.dateunk:
         raise CLIValidationError("--dateunk cannot be combined with --learn")
+    if arguments.learn and arguments.do_not_rescan:
+        raise CLIValidationError("--do-not-rescan cannot be combined with --learn")
+    if arguments.do_not_rescan and not arguments.database.is_file():
+        raise CLIValidationError(
+            f"Catalog database does not exist: {arguments.database}"
+        )
     if not arguments.learn and arguments.output is None:
         raise CLIValidationError("--output is required unless --learn is used")
     if arguments.output is None:
@@ -272,6 +279,54 @@ def _validate_arguments(  # pylint: disable=too-many-branches
 def _format_summary(summary: dict[str, int]) -> str:
     """Format action counts in deterministic order."""
     return ", ".join(f"{key}={summary[key]}" for key in sorted(summary)) or "none"
+
+
+def _filter_records_by_inputs(
+    records: tuple[MediaRecord, ...], input_directories: list[str] | None
+) -> tuple[MediaRecord, ...]:
+    """Limit cached records to optional input roots without scanning them."""
+    if not input_directories:
+        return records
+    roots = tuple(
+        Path(directory).expanduser().resolve() for directory in input_directories
+    )
+    return tuple(
+        record
+        for record in records
+        if any(Path(record.source_path).is_relative_to(root) for root in roots)
+    )
+
+
+def _organize_records(
+    records: tuple[MediaRecord, ...],
+    arguments: argparse.Namespace,
+    catalog: MediaCatalog | None,
+    logger: logging.Logger,
+    catalog_errors: int = 0,
+) -> int:
+    """Plan and optionally execute organization for prepared records."""
+    operation = "move" if arguments.move else "copy"
+    plan = build_organization_plan(
+        records,
+        arguments.output,
+        operation,
+        logger,
+        date_unknown=arguments.dateunk,
+    )
+    if arguments.dry_run:
+        _log_dry_run_plan(plan, logger)
+        logger.info("Dry run complete: %s", _format_summary(plan.summary))
+        return EXIT_PROCESSING_ERROR if catalog_errors else EXIT_SUCCESS
+
+    result = execute_organization_plan(plan, catalog, logger)
+    if result.summary.get("error", 0) or catalog_errors:
+        logger.error(
+            "Processing completed with errors: %s",
+            _format_summary(result.summary),
+        )
+        return EXIT_PROCESSING_ERROR
+    logger.info("Processing complete: %s", _format_summary(result.summary))
+    return EXIT_SUCCESS
 
 
 def _print_catalog_records(records: tuple[MediaRecord, ...]) -> None:

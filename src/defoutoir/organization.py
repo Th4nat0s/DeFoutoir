@@ -95,10 +95,22 @@ def _plan_record(  # pylint: disable=too-many-arguments,too-many-positional-argu
     """Plan one record and reserve its deterministic destination."""
     source = Path(record.source_path)
     exif_date = _missing_exif_date(record, source, date_unknown, logger)
+    relative_directory = _date_directory(record.media_date)
+    destination = _safe_destination(output, relative_directory / source.name)
+    if destination is None:
+        return OrganizationPlanEntry(
+            source,
+            None,
+            PlanAction.ERROR,
+            "destination escapes output directory",
+            record.sha1,
+            exif_date,
+        )
+
     try:
         output_sha1 = (
             calculate_dated_sha1(source, exif_date)
-            if exif_date is not None
+            if exif_date is not None and destination.exists()
             else record.sha1
         )
     except (OSError, ValueError) as error:
@@ -109,17 +121,6 @@ def _plan_record(  # pylint: disable=too-many-arguments,too-many-positional-argu
             PlanAction.ERROR,
             f"cannot prepare EXIF update: {error}",
             record.sha1,
-            exif_date,
-        )
-    relative_directory = _date_directory(record.media_date)
-    destination = _safe_destination(output, relative_directory / source.name)
-    if destination is None:
-        return OrganizationPlanEntry(
-            source,
-            None,
-            PlanAction.ERROR,
-            "destination escapes output directory",
-            output_sha1,
             exif_date,
         )
 
