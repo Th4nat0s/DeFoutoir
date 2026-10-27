@@ -111,3 +111,45 @@ def test_existing_different_content_is_never_overwritten(tmp_path: Path) -> None
         assert result.summary == {"copy": 1}
         assert existing.read_bytes() == b"old"
         assert plan.entries[0].destination_path != existing
+
+
+def test_interrupted_move_resumes_after_destination_was_published(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A restart must finish a move interrupted before source deletion."""
+    source = tmp_path / "source.jpg"
+    source.write_bytes(b"resume move")
+    database = tmp_path / "catalog.sqlite3"
+    output = tmp_path / "sorted"
+
+    with MediaCatalog(database) as catalog:
+        record = catalog.record_file(source, "2024-01-02", "test")
+        plan = build_organization_plan((record,), output, "move")
+        original_update = catalog.update_operation
+
+        def interrupt_after_copy(*args, **kwargs):
+            if args[4] == "copied":
+                raise KeyboardInterrupt
+            return original_update(*args, **kwargs)
+
+        monkeypatch.setattr(catalog, "update_operation", interrupt_after_copy)
+        with pytest.raises(KeyboardInterrupt):
+            execute_organization_plan(plan, catalog)
+
+    destination = output / "2024/01/02/source.jpg"
+    assert destination.read_bytes() == b"resume move"
+    assert source.exists()
+
+    with MediaCatalog(database) as catalog:
+        record = catalog.get_by_path(source)
+        assert record is not None
+        repeated_plan = build_organization_plan((record,), output, "move")
+        result = execute_organization_plan(repeated_plan, catalog)
+        journal = catalog.get_operation(
+            source, destination, "move", _sha1(b"resume move")
+        )
+
+    assert result.summary == {"move": 1}
+    assert not source.exists()
+    assert journal is not None
+    assert journal.status == "completed"

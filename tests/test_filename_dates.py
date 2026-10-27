@@ -18,6 +18,16 @@ from defoutoir.metadata import MetadataDate
         ("VID_2024-12-31_235959.mp4", date(2024, 12, 31), "separated_yyyy_mm_dd"),
         ("IMG_2024_07_09.jpg", date(2024, 7, 9), "separated_yyyy_mm_dd"),
         ("photo.2023.03.08.png", date(2023, 3, 8), "separated_yyyy_mm_dd"),
+        (
+            "VID-20180728-WA0008.mp4",
+            date(2018, 7, 28),
+            "whatsapp_video_yyyymmdd",
+        ),
+        (
+            "video_23012929523.mp4",
+            date(2023, 1, 29),
+            "video_yymmdd_identifier",
+        ),
     ],
 )
 def test_extract_filename_date_supports_documented_patterns(
@@ -39,6 +49,10 @@ def test_extract_filename_date_supports_documented_patterns(
         ),
         ("signal-2021-09-05-094323_002.jpeg", datetime(2021, 9, 5, 9, 43, 23)),
         ("IMG_20240102_123456.JPG", datetime(2024, 1, 2, 12, 34, 56)),
+        (
+            "signal-2021-09-10-06-51-57-523.mp4",
+            datetime(2021, 9, 10, 6, 51, 57),
+        ),
     ],
 )
 def test_resolve_media_date_extracts_filename_timestamp(
@@ -98,6 +112,57 @@ def test_resolve_media_date_prefers_metadata(monkeypatch: pytest.MonkeyPatch) ->
     assert result is not None
     assert result.value == metadata_date.value
     assert result.source == metadata_date.source
+
+
+def test_whatsapp_video_filename_date_overrides_container_metadata() -> None:
+    """WhatsApp video names carry a more reliable date than their container."""
+    metadata_date = MetadataDate(
+        value=datetime(2024, 1, 2, 3, 4, 5),
+        source="container.creation_date",
+        raw_value="2024-01-02 03:04:05",
+    )
+
+    result = filename_dates.resolve_media_date(
+        Path("VID-20180728-WA0008.mp4"), metadata_date
+    )
+
+    assert result is not None
+    assert result.value == datetime(2018, 7, 28, 12)
+    assert result.source == "filename.whatsapp_video_yyyymmdd"
+
+
+def test_signal_filename_date_overrides_container_metadata() -> None:
+    """Signal export names carry a more reliable date than their container."""
+    metadata_date = MetadataDate(
+        value=datetime(2024, 1, 2, 3, 4, 5),
+        source="container.creation_date",
+        raw_value="2024-01-02 03:04:05",
+    )
+
+    result = filename_dates.resolve_media_date(
+        Path("signal-2021-09-10-06-51-57-523.mp4"), metadata_date
+    )
+
+    assert result is not None
+    assert result.value == datetime(2021, 9, 10, 6, 51, 57)
+    assert result.source == "filename.separated_yyyy_mm_dd"
+
+
+def test_short_video_filename_date_overrides_container_metadata() -> None:
+    """A video_YYMMDD identifier must provide its authoritative date."""
+    metadata_date = MetadataDate(
+        value=datetime(2024, 1, 2, 3, 4, 5),
+        source="container.creation_date",
+        raw_value="2024-01-02 03:04:05",
+    )
+
+    result = filename_dates.resolve_media_date(
+        Path("video_23012929523.mp4"), metadata_date
+    )
+
+    assert result is not None
+    assert result.value == datetime(2023, 1, 29, 12)
+    assert result.source == "filename.video_yymmdd_identifier"
 
 
 def test_resolve_media_date_uses_noon_for_date_only_filename() -> None:

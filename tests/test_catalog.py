@@ -1,5 +1,7 @@
 """Tests for the SQLite media catalog."""
 
+# pylint: disable=duplicate-code
+
 from __future__ import annotations
 
 import hashlib
@@ -47,9 +49,66 @@ def test_catalog_creates_versioned_schema(tmp_path: Path) -> None:
             )
         }
 
-    assert {"schema_meta", "media_files"} <= tables
+    assert {"schema_meta", "media_files", "operation_journal"} <= tables
     assert "idx_media_files_sha1" in indexes
     assert "idx_media_files_media_date" in indexes
+    assert "idx_operation_journal_status" in indexes
+
+
+def test_version_one_catalog_is_migrated_with_operation_journal(
+    tmp_path: Path,
+) -> None:
+    """Existing catalogs must gain the journal without losing media rows."""
+    database = tmp_path / "catalog.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.executescript("""
+            CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            INSERT INTO schema_meta VALUES ('version', '1');
+            CREATE TABLE media_files (
+                id INTEGER PRIMARY KEY,
+                source_path TEXT NOT NULL UNIQUE,
+                sha1 TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                modified_ns INTEGER NOT NULL,
+                metadata_changed_ns INTEGER NOT NULL,
+                media_date TEXT,
+                date_source TEXT,
+                processing_state TEXT NOT NULL,
+                created_at_ns INTEGER NOT NULL,
+                updated_at_ns INTEGER NOT NULL
+            );
+            """)
+
+    with MediaCatalog(database) as catalog:
+        assert catalog.schema_version == SCHEMA_VERSION
+
+    with sqlite3.connect(database) as connection:
+        table = connection.execute(
+            "SELECT name FROM sqlite_master WHERE name = 'operation_journal'"
+        ).fetchone()
+    assert table == ("operation_journal",)
+
+
+def test_operation_journal_persists_checkpoints(tmp_path: Path) -> None:
+    """Journal state must survive closing and reopening the catalog."""
+    source = create_file(tmp_path / "source.jpg", b"source")
+    destination = tmp_path / "sorted" / "source.jpg"
+    database = tmp_path / "catalog.sqlite3"
+
+    with MediaCatalog(database) as catalog:
+        catalog.record_file(source)
+        pending = catalog.prepare_operation(
+            source, destination, "copy", hashlib.sha1(b"source").hexdigest()
+        )
+        assert pending.status == "pending"
+        catalog.update_operation(source, destination, "copy", pending.sha1, "copied")
+
+    with MediaCatalog(database) as catalog:
+        resumed = catalog.get_operation(
+            source, destination, "copy", hashlib.sha1(b"source").hexdigest()
+        )
+        assert resumed is not None
+        assert resumed.status == "copied"
 
 
 def test_default_database_path_is_configurable() -> None:

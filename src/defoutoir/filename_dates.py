@@ -30,7 +30,40 @@ class ResolvedDate(NamedTuple):
     pattern: str | None
 
 
+_WHATSAPP_VIDEO_PATTERN = re.compile(
+    "".join(
+        (
+            r"(?i)^VID-(?P<year>\d{4})(?P<month>\d{2})(?P<day>\d{2})",
+            r"-WA\d+(?:\.[^.]+)?$",
+        )
+    )
+)
+_SIGNAL_FILENAME_PATTERN = re.compile(
+    "".join(
+        (
+            r"(?i)^signal-\d{4}-\d{2}-\d{2}-",
+            r"(?:\d{6}(?:_\d+)?|\d{2}-\d{2}-\d{2}(?:-\d+)?)",
+            r"(?:\.[^.]+)?$",
+        )
+    )
+)
+_VIDEO_SHORT_DATE_PATTERN = re.compile(
+    "".join(
+        (
+            r"(?i)^video_(?P<year>\d{2})(?P<month>\d{2})(?P<day>\d{2})",
+            r"\d{5}(?:\.[^.]+)?$",
+        )
+    )
+)
 _DATE_PATTERNS = (
+    (
+        "whatsapp_video_yyyymmdd",
+        _WHATSAPP_VIDEO_PATTERN,
+    ),
+    (
+        "video_yymmdd_identifier",
+        _VIDEO_SHORT_DATE_PATTERN,
+    ),
     (
         "compact_yyyymmdd",
         re.compile(r"(?<!\d)(?P<year>\d{4})(?P<month>\d{2})" + r"(?P<day>\d{2})(?!\d)"),
@@ -46,12 +79,24 @@ _DATE_PATTERNS = (
 _PATH_YEAR = re.compile(r"^(?P<year>\d{4})$")
 _PATH_MONTH_DAY = re.compile(r"^(?P<month>\d{2})(?P<day>\d{2})(?:$|[\s_-])")
 _FILENAME_TIME = re.compile(
-    r"^(?:\s+at\s+|[_ -]+)(?P<hour>\d{2})[.:]"
-    r"(?P<minute>\d{2})[.:](?P<second>\d{2})(?!\d)"
+    r"^(?:\s+at\s+|[_ -]+)(?P<hour>\d{2})(?P<separator>[.:-])"
+    r"(?P<minute>\d{2})(?P=separator)(?P<second>\d{2})(?!\d)"
 )
 _COMPACT_FILENAME_TIME = re.compile(
     r"^(?:[_ -]+)(?P<hour>\d{2})(?P<minute>\d{2})(?P<second>\d{2})(?!\d)"
 )
+
+
+def has_authoritative_filename_date(path: Path) -> bool:
+    """Return whether a trusted filename date must override media metadata."""
+    return any(
+        expression.match(path.name) is not None
+        for expression in (
+            _WHATSAPP_VIDEO_PATTERN,
+            _SIGNAL_FILENAME_PATTERN,
+            _VIDEO_SHORT_DATE_PATTERN,
+        )
+    )
 
 
 def _extract_filename_time(
@@ -76,6 +121,13 @@ def _extract_filename_time(
     return value, raw_value
 
 
+def _expanded_year(match: re.Match[str]) -> int:
+    """Expand a two-digit application year into the 2000s."""
+    year_text = match.group("year")
+    year = int(year_text)
+    return year + 2000 if len(year_text) == 2 else year
+
+
 def extract_filename_date(
     path: Path, logger: logging.Logger | None = None
 ) -> FilenameDate | None:
@@ -92,7 +144,7 @@ def extract_filename_date(
             raw_value = match.group(0)
             try:
                 value = date(
-                    int(match.group("year")),
+                    _expanded_year(match),
                     int(match.group("month")),
                     int(match.group("day")),
                 )
@@ -200,6 +252,12 @@ def resolve_media_date(
 ) -> ResolvedDate | None:
     """Prefer a metadata date and use the filename date only as a fallback."""
 
+    filename_date = None
+    if has_authoritative_filename_date(path):
+        filename_date = extract_filename_date(path, logger=logger)
+    if filename_date is not None:
+        return _resolved_filename_date(filename_date)
+
     if metadata_date is not None:
         return ResolvedDate(
             value=metadata_date.value,
@@ -213,6 +271,11 @@ def resolve_media_date(
         filename_date = extract_path_date(path, logger=logger)
     if filename_date is None:
         return None
+    return _resolved_filename_date(filename_date)
+
+
+def _resolved_filename_date(filename_date: FilenameDate) -> ResolvedDate:
+    """Convert one filename or path date into the normalized result type."""
     return ResolvedDate(
         value=datetime.combine(
             filename_date.value, filename_date.capture_time or time(12, 0)

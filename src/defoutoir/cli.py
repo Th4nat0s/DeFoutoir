@@ -19,11 +19,12 @@ from defoutoir.executor import execute_organization_plan
 from defoutoir.learning import learn_media
 from defoutoir.log import configure_logging
 from defoutoir.organization import OrganizationPlan, build_organization_plan
-from defoutoir.scanner import discover_media
+from defoutoir.scanner import MOVIE_EXTENSIONS, PICTURE_EXTENSIONS, discover_media
 
 EXIT_SUCCESS = 0
 EXIT_PROCESSING_ERROR = 1
 EXIT_VALIDATION_ERROR = 2
+EXIT_INTERRUPTED = 130
 
 
 class CLIValidationError(ValueError):
@@ -98,6 +99,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--move",
         action="store_true",
         help="move files instead of copying them",
+    )
+    media_filter = parser.add_mutually_exclusive_group()
+    media_filter.add_argument(
+        "--only-video",
+        action="store_true",
+        help="copy or move only supported video files",
+    )
+    media_filter.add_argument(
+        "--only-photo",
+        action="store_true",
+        help="copy or move only supported picture files",
     )
     parser.add_argument(
         "--dry-run",
@@ -191,6 +203,11 @@ def main(  # pylint: disable=too-many-return-statements
             return _organize_records(
                 records, arguments, catalog, logger, catalog_errors
             )
+    except KeyboardInterrupt:
+        logger.warning(
+            "Stopped by user. Run the same command to resume journaled operations."
+        )
+        return EXIT_INTERRUPTED
     except (CatalogError, OSError, RuntimeError) as error:
         logger.error("Processing failed: %s", error)
         return EXIT_PROCESSING_ERROR
@@ -210,11 +227,14 @@ def _validate_arguments(  # pylint: disable=too-many-branches
             arguments.learn,
             arguments.dateunk,
             arguments.do_not_rescan,
+            arguments.only_video,
+            arguments.only_photo,
         )
         if any(list_conflicts):
             raise CLIValidationError(
                 "a list option cannot be combined with --output, --move, "
-                "--dry-run, --learn, --dateunk, or --do-not-rescan"
+                "--dry-run, --learn, --dateunk, --do-not-rescan, "
+                "--only-video, or --only-photo"
             )
         if not arguments.database.is_file():
             raise CLIValidationError(
@@ -252,6 +272,10 @@ def _validate_arguments(  # pylint: disable=too-many-branches
         raise CLIValidationError("--dateunk cannot be combined with --learn")
     if arguments.learn and arguments.do_not_rescan:
         raise CLIValidationError("--do-not-rescan cannot be combined with --learn")
+    if arguments.learn and (arguments.only_video or arguments.only_photo):
+        raise CLIValidationError(
+            "--only-video and --only-photo cannot be combined with --learn"
+        )
     if arguments.do_not_rescan and not arguments.database.is_file():
         raise CLIValidationError(
             f"Catalog database does not exist: {arguments.database}"
@@ -305,6 +329,7 @@ def _organize_records(
     catalog_errors: int = 0,
 ) -> int:
     """Plan and optionally execute organization for prepared records."""
+    records = _filter_records_by_media_type(records, arguments, logger)
     operation = "move" if arguments.move else "copy"
     plan = build_organization_plan(
         records,
@@ -327,6 +352,37 @@ def _organize_records(
         return EXIT_PROCESSING_ERROR
     logger.info("Processing complete: %s", _format_summary(result.summary))
     return EXIT_SUCCESS
+
+
+def _filter_records_by_media_type(
+    records: tuple[MediaRecord, ...],
+    arguments: argparse.Namespace,
+    logger: logging.Logger,
+) -> tuple[MediaRecord, ...]:
+    """Keep only the requested media category for organization."""
+    extensions = None
+    category = None
+    if arguments.only_video:
+        extensions = MOVIE_EXTENSIONS
+        category = "video"
+    elif arguments.only_photo:
+        extensions = PICTURE_EXTENSIONS
+        category = "photo"
+    if extensions is None:
+        return records
+
+    selected = tuple(
+        record
+        for record in records
+        if Path(record.source_path).suffix.casefold() in extensions
+    )
+    logger.info(
+        "Media filter %s: selected %d record(s), excluded %d.",
+        category,
+        len(selected),
+        len(records) - len(selected),
+    )
+    return selected
 
 
 def _print_catalog_records(records: tuple[MediaRecord, ...]) -> None:

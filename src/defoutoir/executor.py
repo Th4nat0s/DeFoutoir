@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import NamedTuple
 
-from defoutoir.catalog import CatalogError, MediaCatalog
+from defoutoir.catalog import CatalogError, MediaCatalog, calculate_sha1
 from defoutoir.exif_dates import write_missing_exif_date
 from defoutoir.log import get_logger
 from defoutoir.organization import OrganizationPlan, OrganizationPlanEntry, PlanAction
@@ -39,9 +39,10 @@ def execute_organization_plan(
 ) -> ExecutionResult:
     """Execute each safe plan entry and continue after per-file failures."""
     active_logger = logger or get_logger("executor")
+    _prepare_journal(plan, catalog)
     results: list[ExecutionEntry] = []
     for plan_entry in plan.entries:
-        result = _execute_entry(plan_entry, catalog, active_logger)
+        result = _execute_entry(plan_entry, plan.operation, catalog, active_logger)
         results.append(result)
 
     summary = dict(Counter(_result_key(result) for result in results))
@@ -55,6 +56,7 @@ def execute_organization_plan(
 
 def _execute_entry(
     plan_entry: OrganizationPlanEntry,
+    operation: PlanAction,
     catalog: MediaCatalog | None,
     logger: logging.Logger,
 ) -> ExecutionEntry:
@@ -62,6 +64,10 @@ def _execute_entry(
     if plan_entry.action is PlanAction.ERROR:
         _record_state(catalog, plan_entry.source_path, "error", logger)
         return ExecutionEntry(plan_entry, False, plan_entry.reason)
+    if plan_entry.action is PlanAction.DUPLICATE:
+        resumed = _resume_published_operation(plan_entry, operation, catalog, logger)
+        if resumed is not None:
+            return resumed
     if plan_entry.action in (PlanAction.SKIP, PlanAction.DUPLICATE):
         state = "duplicate" if plan_entry.action is PlanAction.DUPLICATE else "skipped"
         _record_state(catalog, plan_entry.source_path, state, logger)
@@ -75,12 +81,14 @@ def _execute_entry(
     try:
         if plan_entry.action is PlanAction.COPY:
             _copy_plan_entry(plan_entry, logger)
+            _checkpoint(plan_entry, operation, catalog, "copied")
         elif plan_entry.action is PlanAction.MOVE:
             _copy_plan_entry(plan_entry, logger)
+            _checkpoint(plan_entry, operation, catalog, "copied")
             plan_entry.source_path.unlink()
         else:
             raise ValueError(f"unsupported plan action: {plan_entry.action}")
-    except (OSError, shutil.Error, ValueError) as error:
+    except (CatalogError, OSError, shutil.Error, ValueError) as error:
         logger.error(
             "Could not execute %s: %s -> %s: %s",
             plan_entry.action.value,
@@ -88,10 +96,12 @@ def _execute_entry(
             plan_entry.destination_path,
             error,
         )
+        _checkpoint(plan_entry, operation, catalog, "error", str(error), logger)
         _record_state(catalog, plan_entry.source_path, "error", logger)
         return ExecutionEntry(plan_entry, False, str(error))
 
     state = "copied" if plan_entry.action is PlanAction.COPY else "moved"
+    _checkpoint(plan_entry, operation, catalog, "completed")
     _record_state(catalog, plan_entry.source_path, state, logger)
     logger.info(
         "Executed %s: %s -> %s",
@@ -100,6 +110,113 @@ def _execute_entry(
         plan_entry.destination_path,
     )
     return ExecutionEntry(plan_entry, True, None)
+
+
+def _prepare_journal(
+    plan: OrganizationPlan,
+    catalog: MediaCatalog | None,
+) -> None:
+    """Durably record every transfer before the first file is changed."""
+    if catalog is None:
+        return
+    for entry in plan.entries:
+        if entry.action not in (PlanAction.COPY, PlanAction.MOVE):
+            continue
+        if entry.destination_path is None:
+            continue
+        catalog.prepare_operation(
+            entry.source_path,
+            entry.destination_path,
+            plan.operation.value,
+            entry.sha1,
+        )
+
+
+def _resume_published_operation(
+    entry: OrganizationPlanEntry,
+    operation: PlanAction,
+    catalog: MediaCatalog | None,
+    logger: logging.Logger,
+) -> ExecutionEntry | None:
+    """Finish an interrupted operation whose destination is already present."""
+    if catalog is None or entry.destination_path is None:
+        return None
+    journal = catalog.get_operation(
+        entry.source_path,
+        entry.destination_path,
+        operation.value,
+        entry.sha1,
+    )
+    if journal is None or journal.status == "completed":
+        return None
+    try:
+        if calculate_sha1(entry.destination_path) != entry.sha1:
+            raise ValueError("published destination does not match the journal hash")
+        if operation is PlanAction.MOVE and entry.source_path.exists():
+            entry.source_path.unlink()
+        catalog.update_operation(
+            entry.source_path,
+            entry.destination_path,
+            operation.value,
+            entry.sha1,
+            "completed",
+        )
+    except (CatalogError, OSError, ValueError) as error:
+        logger.error(
+            "Could not resume %s: %s -> %s: %s",
+            operation.value,
+            entry.source_path,
+            entry.destination_path,
+            error,
+        )
+        _checkpoint(entry, operation, catalog, "error", str(error), logger)
+        _record_state(catalog, entry.source_path, "error", logger)
+        return ExecutionEntry(entry, False, str(error))
+
+    resumed_entry = entry._replace(
+        action=operation,
+        reason="resumed from operation journal",
+    )
+    state = "copied" if operation is PlanAction.COPY else "moved"
+    _record_state(catalog, entry.source_path, state, logger)
+    logger.info(
+        "Resumed %s: %s -> %s",
+        operation.value,
+        entry.source_path,
+        entry.destination_path,
+    )
+    return ExecutionEntry(resumed_entry, True, None)
+
+
+def _checkpoint(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    entry: OrganizationPlanEntry,
+    operation: PlanAction,
+    catalog: MediaCatalog | None,
+    status: str,
+    error: str | None = None,
+    logger: logging.Logger | None = None,
+) -> None:
+    """Persist one execution checkpoint when a catalog is available."""
+    if catalog is None or entry.destination_path is None:
+        return
+    try:
+        catalog.update_operation(
+            entry.source_path,
+            entry.destination_path,
+            operation.value,
+            entry.sha1,
+            status,
+            error,
+        )
+    except CatalogError as journal_error:
+        if logger is None:
+            raise
+        logger.error(
+            "Could not record journal checkpoint %s for %s: %s",
+            status,
+            entry.source_path,
+            journal_error,
+        )
 
 
 def _copy_plan_entry(plan_entry: OrganizationPlanEntry, logger: logging.Logger) -> None:

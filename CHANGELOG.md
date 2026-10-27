@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Read capture EXIF dates from embedded JPEG previews in Fujifilm RAF files,
+  including uppercase `.RAF` names.
+- Add mutually exclusive `--only-video` and `--only-photo` filters for copy
+  and move operations, including dry-run and catalog-only workflows.
+- Prefer the explicit date in WhatsApp `VID-YYYYMMDD-WA####` video names over
+  unreliable MP4 container processing dates.
+- Recognize Signal export timestamps with compact or hyphenated times and
+  prefer them over embedded processing dates.
+- Recognize authoritative `video_YYMMDD#####` names as a short date followed
+  by an identifier.
+- Add a durable SQLite copy/move journal with safe restart and resume support,
+  including recovery of moves interrupted between destination publication and
+  source deletion.
 - Add `--do-not-rescan` to plan directly from an existing catalog, with an
   optional `--input` path filter and read-only dry-run behavior.
 - Reuse cached SHA-1 and metadata for files whose size and filesystem times

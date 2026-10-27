@@ -6,7 +6,7 @@ import logging
 import re
 from contextlib import contextmanager, redirect_stderr
 from datetime import date, datetime, time, timezone
-from io import StringIO
+from io import BytesIO, StringIO
 from pathlib import Path
 from typing import NamedTuple
 
@@ -38,6 +38,8 @@ XMP_DATE_PATTERNS = (
 XMP_READ_CHUNK_SIZE = 64 * 1024
 XMP_MATCH_OVERLAP = 1024
 XMP_VALUE_MAX_SIZE = 256
+RAF_HEADER_SIZE = 92
+RAF_PREVIEW_MAX_SIZE = 128 * 1024 * 1024
 
 
 class MetadataDate(NamedTuple):
@@ -69,6 +71,8 @@ def extract_media_date(
     is_raster = media_path.suffix.casefold() in RASTER_EXTENSIONS
     if is_raster or media_path.suffix.casefold() in PILLOW_RAW_EXTENSIONS:
         candidates.extend(_extract_pillow_candidates(media_path, active_logger))
+    if media_path.suffix.casefold() == ".raf":
+        candidates.extend(_extract_raf_candidates(media_path, active_logger))
     if not is_raster:
         candidates.extend(_extract_xmp_candidates(media_path, active_logger))
         candidates.extend(_extract_hachoir_candidates(media_path, active_logger))
@@ -120,26 +124,70 @@ def _extract_pillow_candidates(
     logger: logging.Logger,
 ) -> tuple[_DateCandidate, ...]:
     """Read EXIF tags from raster files with Pillow."""
-    candidates: list[_DateCandidate] = []
     try:
         with Image.open(path) as image:
-            exif = image.getexif()
-            exif_ifd = exif.get_ifd(EXIF_IFD_POINTER)
-            values = {
-                EXIF_DATETIME_ORIGINAL: exif_ifd.get(
-                    EXIF_DATETIME_ORIGINAL,
-                    exif.get(EXIF_DATETIME_ORIGINAL),
-                ),
-                EXIF_DATETIME_DIGITIZED: exif_ifd.get(
-                    EXIF_DATETIME_DIGITIZED,
-                    exif.get(EXIF_DATETIME_DIGITIZED),
-                ),
-                EXIF_DATETIME: exif.get(EXIF_DATETIME),
-            }
+            return _extract_image_exif_candidates(image, path, logger)
     except (OSError, ValueError) as error:
         logger.warning("Could not read image metadata from %s: %s", path, error)
         return ()
 
+
+def _extract_raf_candidates(
+    path: Path,
+    logger: logging.Logger,
+) -> tuple[_DateCandidate, ...]:
+    """Read EXIF metadata from the JPEG preview embedded in a Fujifilm RAF."""
+    try:
+        file_size = path.stat().st_size
+        with path.open("rb") as stream:
+            header = stream.read(RAF_HEADER_SIZE)
+            if len(header) != RAF_HEADER_SIZE or not header.startswith(
+                b"FUJIFILMCCD-RAW "
+            ):
+                logger.warning("Invalid Fujifilm RAF header: %s", path)
+                return ()
+            preview_offset = int.from_bytes(header[84:88], "big")
+            preview_size = int.from_bytes(header[88:92], "big")
+            if (
+                preview_offset < RAF_HEADER_SIZE
+                or preview_size <= 0
+                or preview_size > RAF_PREVIEW_MAX_SIZE
+                or preview_offset + preview_size > file_size
+            ):
+                logger.warning("Invalid Fujifilm RAF preview bounds: %s", path)
+                return ()
+            stream.seek(preview_offset)
+            preview = stream.read(preview_size)
+        if len(preview) != preview_size:
+            logger.warning("Incomplete Fujifilm RAF preview: %s", path)
+            return ()
+        with Image.open(BytesIO(preview)) as image:
+            return _extract_image_exif_candidates(image, path, logger)
+    except (OSError, ValueError) as error:
+        logger.warning("Could not read Fujifilm RAF metadata from %s: %s", path, error)
+        return ()
+
+
+def _extract_image_exif_candidates(
+    image: Image.Image,
+    path: Path,
+    logger: logging.Logger,
+) -> tuple[_DateCandidate, ...]:
+    """Read preferred EXIF date candidates from one Pillow image."""
+    candidates: list[_DateCandidate] = []
+    exif = image.getexif()
+    exif_ifd = exif.get_ifd(EXIF_IFD_POINTER)
+    values = {
+        EXIF_DATETIME_ORIGINAL: exif_ifd.get(
+            EXIF_DATETIME_ORIGINAL,
+            exif.get(EXIF_DATETIME_ORIGINAL),
+        ),
+        EXIF_DATETIME_DIGITIZED: exif_ifd.get(
+            EXIF_DATETIME_DIGITIZED,
+            exif.get(EXIF_DATETIME_DIGITIZED),
+        ),
+        EXIF_DATETIME: exif.get(EXIF_DATETIME),
+    }
     source_by_tag = {
         EXIF_DATETIME_ORIGINAL: ("metadata.exif.datetime_original", 0),
         EXIF_DATETIME_DIGITIZED: ("metadata.exif.datetime_digitized", 1),

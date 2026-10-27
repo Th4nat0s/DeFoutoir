@@ -65,6 +65,30 @@ def test_duplicate_files_are_explicitly_classified(tmp_path: Path) -> None:
         assert catalog.get_by_path(second).processing_state == "duplicate"
 
 
+def test_cached_whatsapp_video_date_is_refreshed_without_rehashing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Old cached container dates must migrate to the authoritative filename."""
+    source = tmp_path / "VID-20180728-WA0008.mp4"
+    source.write_bytes(b"video")
+    with MediaCatalog(":memory:") as catalog:
+        catalog.record_file(
+            source,
+            media_date="2024-01-02 03:04:05",
+            date_source="container.creation_date",
+            processing_state="learned",
+        )
+
+        def fail_hash(*_args, **_kwargs):
+            raise AssertionError("content hashing should be skipped")
+
+        monkeypatch.setattr(catalog_module, "calculate_sha1", fail_hash)
+        result = learn_media((source,), (tmp_path,), catalog)
+
+        assert result.records[0].media_date == "2018-07-28 12:00:00"
+        assert result.records[0].date_source == "filename.whatsapp_video_yyyymmdd"
+
+
 def test_removed_file_is_marked_missing(tmp_path: Path) -> None:
     source = tmp_path / "photo.jpg"
     source.write_bytes(b"photo")

@@ -183,6 +183,16 @@ def test_supported_extensions_are_documented_categories() -> None:
     assert all(extension == extension.casefold() for extension in MEDIA_EXTENSIONS)
 
 
+def test_uppercase_fujifilm_raf_is_discovered_as_a_picture(tmp_path: Path) -> None:
+    """Fujifilm RAF files must remain supported with uppercase extensions."""
+    raf_path = create_file(tmp_path / "_DSF0044.RAF")
+
+    result = discover_media([tmp_path])
+
+    assert result.media_files == (raf_path.resolve(),)
+    assert raf_path.suffix.casefold() in PICTURE_EXTENSIONS
+
+
 def test_discovery_logs_progress_skips_and_summary(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,

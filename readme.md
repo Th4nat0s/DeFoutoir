@@ -117,10 +117,60 @@ Explicit move:
 python defoutoir.py --input ./unstructured-media --output ./sorted-media --move
 ```
 
+### Filter by media type
+
+Use `--only-video` to copy or move only supported videos, or `--only-photo`
+to process only supported pictures. The options are mutually exclusive and
+can be combined with `--move`, `--dry-run`, `--dateunk`, and
+`--do-not-rescan`.
+
+Copy videos only:
+
+```bash
+python defoutoir.py --input ./media --output ./sorted --only-video
+```
+
+Move photos only without rescanning the input tree:
+
+```bash
+python defoutoir.py \
+  --database ./defoutoir.sqlite3 \
+  --output ./sorted \
+  --move \
+  --only-photo \
+  --do-not-rescan
+```
+
+The non-selected media remain untouched. A normal scan still catalogs both
+categories; the filter is applied only to the copy or move plan.
+
 Move removes a source only after its destination has been written
 successfully. Existing destination files are never overwritten; identical
 content is skipped and different content receives a deterministic alternate
 name.
+
+### Stop and resume
+
+Every real copy or move is journaled in the SQLite database before files are
+changed. The journal records `pending`, `copied`, `completed`, and `error`
+checkpoints. If the process is stopped with Ctrl-C or interrupted by a machine
+restart, launch the same command again with the same `--database`, `--output`,
+and copy/move mode. Completed transfers are skipped. A move interrupted after
+publishing its destination verifies the destination SHA-1 before removing the
+remaining source and marking the operation complete.
+
+For a large tree, resume directly from the database without traversing the
+input again:
+
+```bash
+python defoutoir.py \
+  --database ./defoutoir.sqlite3 \
+  --output ./sorted-media \
+  --move \
+  --do-not-rescan
+```
+
+`--dry-run` never creates or updates journal entries.
 
 ### Add missing EXIF dates
 
@@ -171,6 +221,10 @@ Supported movie extensions:
 3g2, 3gp, avi, m2ts, m4v, mkv, mov, mp4, mpeg, mpg, mts, webm, wmv
 ```
 
+Fujifilm `.RAF` files, including uppercase names such as `_DSF0044.RAF`, are
+treated as photos. DeFoutoir reads the capture EXIF date from the JPEG preview
+embedded in the RAF container without modifying the RAW file.
+
 Symbolic links found inside an input tree are skipped. An input path that is
 itself a symbolic link is resolved once before scanning. Unreadable or invalid
 paths produce warnings without stopping the remaining inputs. macOS metadata
@@ -182,10 +236,12 @@ The catalog is stored in `defoutoir.sqlite3` by default. The database path is
 configurable with `--database` or through the Python catalog API. Dry-run uses
 an in-memory catalog and never creates or changes the configured database.
 
-The catalog uses schema version 1 and stores the normalized source path,
+The catalog uses schema version 2 and stores the normalized source path,
 incremental SHA-1 identity, file size, modification timestamps, resolved media
 date, date source, and processing state. A SHA-1 index makes duplicate-content
 groups queryable without changing or deleting the original files.
+The `operation_journal` table stores durable copy/move checkpoints and is
+created automatically when a version 1 catalog is opened.
 
 List the catalog without scanning or modifying anything:
 
@@ -231,9 +287,22 @@ the filename. The supported patterns are `YYYYMMDD`, `YYYY-MM-DD`,
 follows the date as `HHMMSS` (for example `IMG_20240102_123456.JPG`) or as
 `at HH.MM.SS` (for example a WhatsApp export). Invalid dates, ambiguous short
 formats, and filenames containing multiple different dates are ignored.
-Metadata always takes precedence over a filename date.
+Metadata normally takes precedence over a filename date.
 When the filename or source path supplies only a date, the catalog records
 `12:00:00`; a filename with an explicit time keeps that time.
+
+WhatsApp video names in the form `VID-YYYYMMDD-WA####`, such as
+`VID-20180728-WA0008.mp4`, are treated as authoritative because copied or
+exported MP4 containers often contain a later processing date. This example is
+therefore organized under `2018/07/28` with a time of `12:00:00`.
+Signal export names are also authoritative. Both compact timestamps such as
+`signal-2021-09-05-094323_002.jpeg` and hyphenated timestamps such as
+`signal-2021-09-10-06-51-57-523.mp4` are supported; the latter resolves to
+`2021-09-10 06:51:57`.
+Names in the form `video_YYMMDD#####`, such as `video_23012929523`, are also
+treated as authoritative. The first six digits encode the date, so this
+example resolves to `2023-01-29 12:00:00`; the last five digits are an
+identifier, not a time.
 
 ## Development setup
 

@@ -7,11 +7,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
 from defoutoir.catalog import MediaCatalog
 from defoutoir import __license__, __version__
-from defoutoir.cli import main
+from defoutoir.cli import EXIT_INTERRUPTED, main
 from defoutoir.metadata import extract_media_date
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -91,6 +92,68 @@ def test_main_accepts_repeated_inputs_and_copies_files(tmp_path: Path) -> None:
     assert (output / "2024/01/03/two_20240103.jpg").read_bytes() == b"two"
 
 
+def test_only_video_copies_videos_and_leaves_photos_unorganized(
+    tmp_path: Path,
+) -> None:
+    """The video filter must affect organization without hiding photos."""
+    input_directory = tmp_path / "input"
+    output = tmp_path / "output"
+    input_directory.mkdir()
+    photo = input_directory / "photo_20240102.jpg"
+    video = input_directory / "video_20240103.mp4"
+    photo.write_bytes(b"photo")
+    video.write_bytes(b"video")
+
+    result = main(
+        [
+            "--input",
+            str(input_directory),
+            "--output",
+            str(output),
+            "--database",
+            str(tmp_path / "catalog.sqlite3"),
+            "--only-video",
+        ]
+    )
+
+    assert result == 0
+    assert (output / "2024/01/03/video_20240103.mp4").read_bytes() == b"video"
+    assert not (output / "2024/01/02/photo_20240102.jpg").exists()
+    assert photo.exists()
+    with MediaCatalog(tmp_path / "catalog.sqlite3") as catalog:
+        assert catalog.get_by_path(photo) is not None
+
+
+def test_only_photo_move_keeps_video_source(tmp_path: Path) -> None:
+    """The photo filter must move photos without touching video sources."""
+    input_directory = tmp_path / "input"
+    output = tmp_path / "output"
+    input_directory.mkdir()
+    photo = input_directory / "photo_20240102.jpg"
+    video = input_directory / "video_20240103.mp4"
+    photo.write_bytes(b"photo")
+    video.write_bytes(b"video")
+
+    result = main(
+        [
+            "--input",
+            str(input_directory),
+            "--output",
+            str(output),
+            "--database",
+            str(tmp_path / "catalog.sqlite3"),
+            "--move",
+            "--only-photo",
+        ]
+    )
+
+    assert result == 0
+    assert (output / "2024/01/02/photo_20240102.jpg").read_bytes() == b"photo"
+    assert not photo.exists()
+    assert video.read_bytes() == b"video"
+    assert not (output / "2024/01/03/video_20240103.mp4").exists()
+
+
 def test_main_rejects_missing_output_without_processing(tmp_path: Path, capsys) -> None:
     """Organization mode must explain that an output is required."""
     input_directory = tmp_path / "input"
@@ -127,6 +190,30 @@ def test_main_rejects_missing_input_directory(tmp_path: Path, capsys) -> None:
     assert "does not exist" in capsys.readouterr().err
 
 
+def test_ctrl_c_returns_standard_code_and_explains_resume(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ctrl-C must stop cleanly and tell the user how to resume."""
+    input_directory = tmp_path / "input"
+    input_directory.mkdir()
+
+    def interrupt(*_args, **_kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("defoutoir.cli.discover_media", interrupt)
+    result = main(
+        [
+            "--input",
+            str(input_directory),
+            "--output",
+            str(tmp_path / "output"),
+        ]
+    )
+
+    assert result == EXIT_INTERRUPTED
+    assert "same command to resume" in capsys.readouterr().err
+
+
 def test_main_rejects_incompatible_learn_options(tmp_path: Path, capsys) -> None:
     """Learn mode must remain catalog-only."""
     input_directory = tmp_path / "input"
@@ -136,6 +223,8 @@ def test_main_rejects_incompatible_learn_options(tmp_path: Path, capsys) -> None
     assert "cannot be combined" in capsys.readouterr().err
     assert main(["--input", str(input_directory), "--learn", "--dry-run"]) == 2
     assert main(["--input", str(input_directory), "--learn", "--dateunk"]) == 2
+    assert main(["--input", str(input_directory), "--learn", "--only-video"]) == 2
+    assert main(["--input", str(input_directory), "--learn", "--only-photo"]) == 2
 
 
 def test_dateunk_copy_dates_destination_and_preserves_source(tmp_path: Path) -> None:

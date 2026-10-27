@@ -13,7 +13,7 @@ from typing import NamedTuple
 from defoutoir.log import get_logger
 
 DEFAULT_DATABASE_PATH = Path("defoutoir.sqlite3")
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 HASH_CHUNK_SIZE = 1024 * 1024
 
 
@@ -33,6 +33,20 @@ class MediaRecord(NamedTuple):
     media_date: str | None
     date_source: str | None
     processing_state: str
+    created_at_ns: int
+    updated_at_ns: int
+
+
+class OperationJournalEntry(NamedTuple):
+    """A durable copy or move operation that can be resumed."""
+
+    id: int
+    source_path: str
+    destination_path: str
+    operation: str
+    sha1: str
+    status: str
+    error: str | None
     created_at_ns: int
     updated_at_ns: int
 
@@ -206,6 +220,138 @@ class MediaCatalog:
             raise CatalogError(f"Media file disappeared from catalog: {source_path}")
         self._logger.info("Updated processing state for %s: %s", source_path, state)
         return record
+
+    def prepare_operation(
+        self,
+        source: str | Path,
+        destination: str | Path,
+        operation: str,
+        sha1: str,
+    ) -> OperationJournalEntry:
+        """Create or reset one resumable copy or move journal entry."""
+        if operation not in ("copy", "move"):
+            raise CatalogError(f"Unsupported journal operation: {operation}")
+        source_path = self._normalize_lookup_path(source)
+        destination_path = self._normalize_lookup_path(destination)
+        now = time.time_ns()
+        connection = self._connection_or_raise()
+        try:
+            with connection:
+                connection.execute(
+                    """
+                    INSERT INTO operation_journal (
+                        source_path, destination_path, operation, sha1,
+                        status, error, created_at_ns, updated_at_ns
+                    ) VALUES (?, ?, ?, ?, 'pending', NULL, ?, ?)
+                    ON CONFLICT(source_path, destination_path, operation, sha1)
+                    DO UPDATE SET
+                        status = 'pending',
+                        error = NULL,
+                        updated_at_ns = excluded.updated_at_ns
+                    """,
+                    (
+                        source_path,
+                        destination_path,
+                        operation,
+                        sha1,
+                        now,
+                        now,
+                    ),
+                )
+        except sqlite3.Error as error:
+            raise CatalogError(
+                f"Could not prepare operation journal: {error}"
+            ) from error
+        entry = self.get_operation(source, destination, operation, sha1)
+        if entry is None:
+            raise CatalogError("Operation journal entry disappeared after creation")
+        self._logger.info(
+            "Journaled %s operation: %s -> %s", operation, source_path, destination_path
+        )
+        return entry
+
+    def get_operation(
+        self,
+        source: str | Path,
+        destination: str | Path,
+        operation: str,
+        sha1: str,
+    ) -> OperationJournalEntry | None:
+        """Return the journal entry matching one exact planned operation."""
+        row = (
+            self._connection_or_raise()
+            .execute(
+                """
+            SELECT id, source_path, destination_path, operation, sha1,
+                   status, error, created_at_ns, updated_at_ns
+            FROM operation_journal
+            WHERE source_path = ? AND destination_path = ?
+              AND operation = ? AND sha1 = ?
+            """,
+                (
+                    self._normalize_lookup_path(source),
+                    self._normalize_lookup_path(destination),
+                    operation,
+                    sha1,
+                ),
+            )
+            .fetchone()
+        )
+        return _row_to_operation(row) if row is not None else None
+
+    def update_operation(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        source: str | Path,
+        destination: str | Path,
+        operation: str,
+        sha1: str,
+        status: str,
+        error: str | None = None,
+    ) -> OperationJournalEntry:
+        """Persist a journal checkpoint for one copy or move operation."""
+        if status not in ("pending", "copied", "completed", "error"):
+            raise CatalogError(f"Unsupported journal status: {status}")
+        source_path = self._normalize_lookup_path(source)
+        destination_path = self._normalize_lookup_path(destination)
+        connection = self._connection_or_raise()
+        try:
+            with connection:
+                cursor = connection.execute(
+                    """
+                    UPDATE operation_journal
+                    SET status = ?, error = ?, updated_at_ns = ?
+                    WHERE source_path = ? AND destination_path = ?
+                      AND operation = ? AND sha1 = ?
+                    """,
+                    (
+                        status,
+                        error,
+                        time.time_ns(),
+                        source_path,
+                        destination_path,
+                        operation,
+                        sha1,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise CatalogError(
+                        "Operation is not journaled: "
+                        f"{source_path} -> {destination_path}"
+                    )
+        except sqlite3.Error as db_error:
+            raise CatalogError(
+                f"Could not update operation journal: {db_error}"
+            ) from db_error
+        entry = self.get_operation(source, destination, operation, sha1)
+        if entry is None:
+            raise CatalogError("Operation journal entry disappeared after update")
+        self._logger.info(
+            "Operation journal checkpoint %s: %s -> %s",
+            status,
+            source_path,
+            destination_path,
+        )
+        return entry
 
     def get_by_path(self, path: str | Path) -> MediaRecord | None:
         """Return the record for a normalized source path, if present."""
@@ -390,6 +536,38 @@ class MediaCatalog:
         row = connection.execute(
             "SELECT value FROM schema_meta WHERE key = 'version'"
         ).fetchone()
+        if row is not None and int(row[0]) == 1:
+            with connection:
+                connection.execute(
+                    "UPDATE schema_meta SET value = ? WHERE key = 'version'",
+                    (str(SCHEMA_VERSION),),
+                )
+
+        with connection:
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS operation_journal (
+                    id INTEGER PRIMARY KEY,
+                    source_path TEXT NOT NULL,
+                    destination_path TEXT NOT NULL,
+                    operation TEXT NOT NULL CHECK (operation IN ('copy', 'move')),
+                    sha1 TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK (
+                        status IN ('pending', 'copied', 'completed', 'error')
+                    ),
+                    error TEXT,
+                    created_at_ns INTEGER NOT NULL,
+                    updated_at_ns INTEGER NOT NULL,
+                    UNIQUE(source_path, destination_path, operation, sha1)
+                )
+                """)
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_operation_journal_status "
+                "ON operation_journal (status)"
+            )
+
+        row = connection.execute(
+            "SELECT value FROM schema_meta WHERE key = 'version'"
+        ).fetchone()
         if row is None or int(row[0]) != SCHEMA_VERSION:
             version = row[0] if row is not None else "missing"
             raise CatalogError(f"Unsupported media catalog schema version: {version}")
@@ -485,4 +663,19 @@ def _row_to_record(row: tuple[object, ...]) -> MediaRecord:
         processing_state=str(row[8]),
         created_at_ns=int(row[9]),
         updated_at_ns=int(row[10]),
+    )
+
+
+def _row_to_operation(row: tuple[object, ...]) -> OperationJournalEntry:
+    """Convert a SQLite row into a public operation journal entry."""
+    return OperationJournalEntry(
+        id=int(row[0]),
+        source_path=str(row[1]),
+        destination_path=str(row[2]),
+        operation=str(row[3]),
+        sha1=str(row[4]),
+        status=str(row[5]),
+        error=str(row[6]) if row[6] is not None else None,
+        created_at_ns=int(row[7]),
+        updated_at_ns=int(row[8]),
     )

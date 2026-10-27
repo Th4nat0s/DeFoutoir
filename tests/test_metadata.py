@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date, datetime
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -59,6 +60,29 @@ def test_lightroom_dng_reads_capture_date_from_exif() -> None:
 
     assert result is not None
     assert result.value == datetime(2013, 6, 29, 11, 57, 49)
+    assert result.source == "metadata.exif.datetime_original"
+
+
+def test_fujifilm_raf_reads_exif_from_embedded_jpeg(tmp_path: Path) -> None:
+    """A Fujifilm RAF must expose the capture date from its JPEG preview."""
+    preview_stream = BytesIO()
+    exif = Image.Exif()
+    exif[36867] = "2018:07:28 09:10:11"
+    Image.new("RGB", (8, 6), color="green").save(
+        preview_stream, format="JPEG", exif=exif
+    )
+    preview = preview_stream.getvalue()
+    header = bytearray(metadata_module.RAF_HEADER_SIZE)
+    header[:16] = b"FUJIFILMCCD-RAW "
+    header[84:88] = metadata_module.RAF_HEADER_SIZE.to_bytes(4, "big")
+    header[88:92] = len(preview).to_bytes(4, "big")
+    raf_path = tmp_path / "_DSF0044.RAF"
+    raf_path.write_bytes(bytes(header) + preview)
+
+    result = extract_media_date(raf_path)
+
+    assert result is not None
+    assert result.value == datetime(2018, 7, 28, 9, 10, 11)
     assert result.source == "metadata.exif.datetime_original"
 
 

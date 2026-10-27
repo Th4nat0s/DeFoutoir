@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from defoutoir.catalog import CatalogError, MediaCatalog, MediaRecord
-from defoutoir.filename_dates import resolve_media_date
+from defoutoir.filename_dates import has_authoritative_filename_date, resolve_media_date
 from defoutoir.log import get_logger
 from defoutoir.metadata import extract_media_date
 
@@ -84,6 +84,13 @@ def _learn_one(
         "copied",
         "moved",
     }
+    if (
+        metadata_is_current
+        and has_authoritative_filename_date(media_path)
+        and not (existing.date_source or "").startswith("filename.")
+    ):
+        metadata_is_current = False
+        logger.info("Refreshing authoritative filename date: %s", media_path)
     if metadata_is_current:
         record = existing
     else:
