@@ -33,6 +33,42 @@ def test_copy_creates_destination_and_preserves_source(tmp_path: Path) -> None:
         assert catalog.get_by_path(source).processing_state == "copied"
 
 
+def test_journal_and_copy_are_interleaved_per_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Large plans must start copying before later entries are journaled."""
+    first = tmp_path / "first.jpg"
+    second = tmp_path / "second.jpg"
+    first.write_bytes(b"first")
+    second.write_bytes(b"second")
+    events: list[tuple[str, str]] = []
+
+    with MediaCatalog(":memory:") as catalog:
+        records = (catalog.record_file(first), catalog.record_file(second))
+        plan = build_organization_plan(records, tmp_path / "sorted")
+        original_prepare = catalog.prepare_operation
+        original_copy = executor._copy_plan_entry
+
+        def track_prepare(source, destination, operation, sha1):
+            events.append(("journal", Path(source).name))
+            return original_prepare(source, destination, operation, sha1)
+
+        def track_copy(entry, logger):
+            events.append(("copy", entry.source_path.name))
+            return original_copy(entry, logger)
+
+        monkeypatch.setattr(catalog, "prepare_operation", track_prepare)
+        monkeypatch.setattr(executor, "_copy_plan_entry", track_copy)
+        execute_organization_plan(plan, catalog)
+
+    assert events == [
+        ("journal", "first.jpg"),
+        ("copy", "first.jpg"),
+        ("journal", "second.jpg"),
+        ("copy", "second.jpg"),
+    ]
+
+
 def test_move_removes_source_only_after_success(tmp_path: Path) -> None:
     source = tmp_path / "source.jpg"
     source.write_bytes(b"move me")

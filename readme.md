@@ -170,6 +170,9 @@ and copy/move mode. Completed transfers are skipped. A move interrupted after
 publishing its destination verifies the destination SHA-1 before removing each
 remaining source. Every source deletion has its own checkpoint, so cleanup
 continues safely after a restart.
+Journal entries are written immediately before their corresponding file
+operation, so large plans begin copying without first committing the complete
+plan to SQLite.
 
 For a large tree, resume directly from the database without traversing the
 input again:

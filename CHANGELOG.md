@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Interleave journal creation with file execution so large plans start copying
+  immediately while preserving per-file restart safety.
 - Process undated media first, then dated media from the oldest capture
   timestamp to the newest with deterministic tie-breaking.
 - Deduplicate organization globally per output SHA-1, select a canonical

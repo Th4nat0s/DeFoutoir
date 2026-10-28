@@ -39,9 +39,9 @@ def execute_organization_plan(
 ) -> ExecutionResult:
     """Execute each safe plan entry and continue after per-file failures."""
     active_logger = logger or get_logger("executor")
-    _prepare_journal(plan, catalog)
     results: list[ExecutionEntry] = []
     for plan_entry in plan.entries:
+        _prepare_journal_entry(plan, plan_entry, catalog)
         result = _execute_entry(
             plan_entry,
             plan.operation,
@@ -125,43 +125,43 @@ def _execute_entry(
     return ExecutionEntry(plan_entry, True, None)
 
 
-def _prepare_journal(
+def _prepare_journal_entry(
     plan: OrganizationPlan,
+    entry: OrganizationPlanEntry,
     catalog: MediaCatalog | None,
 ) -> None:
-    """Durably record every transfer before the first file is changed."""
+    """Durably record one transfer immediately before changing its files."""
     if catalog is None:
         return
-    for entry in plan.entries:
-        journal_duplicate_move = (
-            plan.operation is PlanAction.MOVE and entry.action is PlanAction.DUPLICATE
-        )
-        if (
-            entry.action not in (PlanAction.COPY, PlanAction.MOVE)
-            and not journal_duplicate_move
-        ):
-            continue
-        if entry.destination_path is None:
-            continue
-        existing = catalog.get_operation(
-            entry.source_path,
-            entry.destination_path,
-            plan.operation.value,
-            entry.sha1,
-        )
-        if (
-            entry.action is PlanAction.DUPLICATE
-            and existing is not None
-            and existing.status == "completed"
-            and not entry.source_path.exists()
-        ):
-            continue
-        catalog.prepare_operation(
-            entry.source_path,
-            entry.destination_path,
-            plan.operation.value,
-            entry.sha1,
-        )
+    journal_duplicate_move = (
+        plan.operation is PlanAction.MOVE and entry.action is PlanAction.DUPLICATE
+    )
+    if (
+        entry.action not in (PlanAction.COPY, PlanAction.MOVE)
+        and not journal_duplicate_move
+    ):
+        return
+    if entry.destination_path is None:
+        return
+    existing = catalog.get_operation(
+        entry.source_path,
+        entry.destination_path,
+        plan.operation.value,
+        entry.sha1,
+    )
+    if (
+        entry.action is PlanAction.DUPLICATE
+        and existing is not None
+        and existing.status == "completed"
+        and not entry.source_path.exists()
+    ):
+        return
+    catalog.prepare_operation(
+        entry.source_path,
+        entry.destination_path,
+        plan.operation.value,
+        entry.sha1,
+    )
 
 
 def _resume_published_operation(
