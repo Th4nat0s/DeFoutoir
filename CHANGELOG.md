@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Process undated media first, then dated media from the oldest capture
+  timestamp to the newest with deterministic tie-breaking.
 - Deduplicate organization globally per output SHA-1, select a canonical
   date-bearing shortest filename, and remove every selected duplicate source
   only after a grouped move is published and verified.

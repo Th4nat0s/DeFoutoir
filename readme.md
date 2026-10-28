@@ -29,6 +29,9 @@ name receives a deterministic `filename__<sha1-prefix>.ext` alternate name.
 Source files are grouped by SHA-1 before planning, so only one representative
 is published. A filename containing a recognized date is preferred, then the
 shortest normalized filename, followed by stable lexical path ordering.
+Groups without a resolved media timestamp are processed first. Dated groups
+then run from the oldest capture timestamp to the newest, with stable path
+ordering when timestamps are equal. The dry-run preview uses the same order.
 
 ## Multiple input folders
 

@@ -78,7 +78,7 @@ def build_organization_plan(  # pylint: disable=too-many-arguments,too-many-posi
         selected_groups.append((representative, group))
 
     for representative, group in sorted(
-        selected_groups, key=lambda item: item[0].source_path
+        selected_groups, key=lambda item: _organization_group_key(item[0])
     ):
         canonical = _plan_record(
             representative,
@@ -216,6 +216,17 @@ def _canonical_record_key(record: MediaRecord) -> tuple[object, ...]:
         record.source_path.casefold(),
         record.source_path,
     )
+
+
+def _organization_group_key(record: MediaRecord) -> tuple[object, ...]:
+    """Order undated groups first, then dated groups from oldest to newest."""
+    if not record.media_date:
+        return (0, datetime.min, record.source_path.casefold(), record.source_path)
+    try:
+        captured = datetime.fromisoformat(record.media_date)
+    except ValueError:
+        return (0, datetime.min, record.source_path.casefold(), record.source_path)
+    return (1, captured, record.source_path.casefold(), record.source_path)
 
 
 def _missing_exif_date(

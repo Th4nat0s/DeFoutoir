@@ -180,6 +180,45 @@ def test_existing_output_content_suppresses_copy_under_another_name(
     assert plan.entries[0].destination_path == existing
 
 
+def test_plan_orders_undated_then_oldest_to_newest(tmp_path: Path) -> None:
+    """Execution order must make chronological progress visible to users."""
+    newest = tmp_path / "newest.jpg"
+    unknown = tmp_path / "unknown.jpg"
+    oldest = tmp_path / "oldest.jpg"
+    newest.write_bytes(b"newest")
+    unknown.write_bytes(b"unknown")
+    oldest.write_bytes(b"oldest")
+    records = (
+        _record(newest, "3" * 40, "2024-06-03 09:00:00"),
+        _record(unknown, "2" * 40),
+        _record(oldest, "1" * 40, "1999-01-02 08:00:00"),
+    )
+
+    plan = build_organization_plan(records, tmp_path / "sorted")
+
+    assert [entry.source_path.name for entry in plan.entries] == [
+        "unknown.jpg",
+        "oldest.jpg",
+        "newest.jpg",
+    ]
+
+
+def test_equal_timestamps_use_stable_path_order(tmp_path: Path) -> None:
+    """Equal dates must retain a deterministic cross-run order."""
+    second = tmp_path / "z.jpg"
+    first = tmp_path / "A.jpg"
+    second.write_bytes(b"second")
+    first.write_bytes(b"first")
+    records = (
+        _record(second, "2" * 40, "2024-01-02 12:00:00"),
+        _record(first, "1" * 40, "2024-01-02 12:00:00"),
+    )
+
+    plan = build_organization_plan(records, tmp_path / "sorted")
+
+    assert [entry.source_path.name for entry in plan.entries] == ["A.jpg", "z.jpg"]
+
+
 def test_existing_same_content_is_duplicate(tmp_path: Path) -> None:
     source = tmp_path / "source.jpg"
     source.write_bytes(b"same")
