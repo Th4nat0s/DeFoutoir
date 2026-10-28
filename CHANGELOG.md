@@ -5,7 +5,7 @@
 - Read capture EXIF dates from embedded JPEG previews in Fujifilm RAF files,
   including uppercase `.RAF` names.
 - Add mutually exclusive `--only-video` and `--only-photo` filters for copy
-  and move operations, including dry-run and catalog-only workflows.
+  and move operations, including dry-run, catalog-only, and all list workflows.
 - Prefer the explicit date in WhatsApp `VID-YYYYMMDD-WA####` video names over
   unreliable MP4 container processing dates.
 - Recognize Signal export timestamps with compact or hyphenated times and

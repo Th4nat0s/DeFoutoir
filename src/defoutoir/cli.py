@@ -172,6 +172,7 @@ def main(  # pylint: disable=too-many-return-statements
         if arguments.list_mode:
             records = read_catalog_records(arguments.database)
             records = _filter_catalog_records(records, arguments.list_mode)
+            records = _filter_records_by_media_type(records, arguments, logger)
             _print_catalog_records(records)
             logger.info("Listed %d catalog records.", len(records))
             return EXIT_SUCCESS
@@ -227,14 +228,11 @@ def _validate_arguments(  # pylint: disable=too-many-branches
             arguments.learn,
             arguments.dateunk,
             arguments.do_not_rescan,
-            arguments.only_video,
-            arguments.only_photo,
         )
         if any(list_conflicts):
             raise CLIValidationError(
                 "a list option cannot be combined with --output, --move, "
-                "--dry-run, --learn, --dateunk, --do-not-rescan, "
-                "--only-video, or --only-photo"
+                "--dry-run, --learn, --dateunk, or --do-not-rescan"
             )
         if not arguments.database.is_file():
             raise CLIValidationError(

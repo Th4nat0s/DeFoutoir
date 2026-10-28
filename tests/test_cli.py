@@ -571,6 +571,36 @@ def test_list_duplicates_prints_all_records_with_shared_hash(
     ]
 
 
+@pytest.mark.parametrize(
+    "list_option",
+    ("--list", "--list-no-date", "--list-errors", "--list-duplicates"),
+)
+def test_all_list_modes_accept_media_type_filters(
+    tmp_path: Path, capsys, list_option: str
+) -> None:
+    """Every read-only list condition must combine with photo/video filters."""
+    photo = tmp_path / "photo.jpg"
+    video = tmp_path / "video.mp4"
+    photo.write_bytes(b"duplicate")
+    video.write_bytes(b"duplicate")
+    database = tmp_path / "catalog.sqlite3"
+    with MediaCatalog(database) as catalog:
+        catalog.record_file(photo, processing_state="error")
+        catalog.record_file(video, processing_state="error")
+    before = database.read_bytes()
+
+    assert main([list_option, "--only-video", "--database", str(database)]) == 0
+    video_output = capsys.readouterr().out
+    assert "video.mp4" in video_output
+    assert "photo.jpg" not in video_output
+
+    assert main([list_option, "--only-photo", "--database", str(database)]) == 0
+    photo_output = capsys.readouterr().out
+    assert "photo.jpg" in photo_output
+    assert "video.mp4" not in photo_output
+    assert database.read_bytes() == before
+
+
 def test_list_missing_database_is_validation_error(tmp_path: Path, capsys) -> None:
     """List mode must not create a missing catalog database."""
     database = tmp_path / "missing.sqlite3"

@@ -264,6 +264,16 @@ python defoutoir.py --list-duplicates --database ./defoutoir.sqlite3
 least one other file. Entries are sorted by SHA-1, so each duplicate group is
 contiguous.
 
+All list modes accept `--only-video` or `--only-photo`. The media filter is
+combined with the selected list condition and remains read-only:
+
+```bash
+python defoutoir.py --list --only-video --database ./defoutoir.sqlite3
+python defoutoir.py --list-errors --only-photo --database ./defoutoir.sqlite3
+python defoutoir.py --list-no-date --only-video --database ./defoutoir.sqlite3
+python defoutoir.py --list-duplicates --only-photo --database ./defoutoir.sqlite3
+```
+
 ## Metadata date precedence
 
 The metadata extractor reads dates without modifying the source file. When
