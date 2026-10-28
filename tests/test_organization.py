@@ -91,6 +91,53 @@ def test_duplicate_content_is_explicitly_skipped(tmp_path: Path) -> None:
     assert plan.summary == {"copy": 1, "duplicate": 1}
 
 
+def test_unicode_equivalent_names_share_one_normalized_destination(
+    tmp_path: Path,
+) -> None:
+    """NFD and NFC names must not create two visually identical share paths."""
+    first = tmp_path / "first" / "Moyeuvre-Grande-à.JPG"
+    second = tmp_path / "second" / "Moyeuvre-Grande-a\u0300.JPG"
+    first.parent.mkdir()
+    second.parent.mkdir()
+    first.write_bytes(b"same")
+    second.write_bytes(b"same")
+    same_hash = hashlib.sha1(b"same", usedforsecurity=False).hexdigest()
+
+    plan = build_organization_plan(
+        (_record(first, same_hash), _record(second, same_hash)),
+        tmp_path / "sorted",
+    )
+
+    destinations = {entry.destination_path for entry in plan.entries}
+    assert destinations == {tmp_path / "sorted/unknown/Moyeuvre-Grande-à.JPG"}
+    assert plan.summary == {"copy": 1, "duplicate": 1}
+
+
+def test_unicode_equivalent_names_with_different_content_use_alternate_name(
+    tmp_path: Path,
+) -> None:
+    """Normalization collisions must preserve both different files safely."""
+    first = tmp_path / "first" / "Moyeuvre-Grande-à.JPG"
+    second = tmp_path / "second" / "Moyeuvre-Grande-a\u0300.JPG"
+    first.parent.mkdir()
+    second.parent.mkdir()
+    first.write_bytes(b"first")
+    second.write_bytes(b"second")
+    records = (_record(first, "1" * 40), _record(second, "2" * 40))
+
+    plan = build_organization_plan(records, tmp_path / "sorted")
+
+    destination_names = {
+        entry.destination_path.name
+        for entry in plan.entries
+        if entry.destination_path is not None
+    }
+    assert destination_names == {
+        "Moyeuvre-Grande-à.JPG",
+        "Moyeuvre-Grande-à__22222222.JPG",
+    }
+
+
 def test_existing_same_content_is_duplicate(tmp_path: Path) -> None:
     source = tmp_path / "source.jpg"
     source.write_bytes(b"same")

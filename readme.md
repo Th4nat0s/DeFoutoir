@@ -148,6 +148,10 @@ Move removes a source only after its destination has been written
 successfully. Existing destination files are never overwritten; identical
 content is skipped and different content receives a deterministic alternate
 name.
+Destination filenames are normalized to Unicode NFC for compatibility with
+network shares and filesystems. Visually identical decomposed and composed
+names therefore collide safely: identical content is skipped, while different
+content receives the usual deterministic SHA-1 suffix.
 
 ### Stop and resume
 

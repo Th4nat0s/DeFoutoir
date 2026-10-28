@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Normalize destination filenames to Unicode NFC so composed and decomposed
+  accents behave consistently on network shares.
 - Read capture EXIF dates from embedded JPEG previews in Fujifilm RAF files,
   including uppercase `.RAF` names.
 - Add mutually exclusive `--only-video` and `--only-photo` filters for copy

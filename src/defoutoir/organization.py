@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import hashlib
+import unicodedata
 from collections import Counter
 from datetime import date, datetime
 from enum import Enum
@@ -96,7 +97,8 @@ def _plan_record(  # pylint: disable=too-many-arguments,too-many-positional-argu
     source = Path(record.source_path)
     exif_date = _missing_exif_date(record, source, date_unknown, logger)
     relative_directory = _date_directory(record.media_date)
-    destination = _safe_destination(output, relative_directory / source.name)
+    normalized_name = unicodedata.normalize("NFC", source.name)
+    destination = _safe_destination(output, relative_directory / normalized_name)
     if destination is None:
         return OrganizationPlanEntry(
             source,
