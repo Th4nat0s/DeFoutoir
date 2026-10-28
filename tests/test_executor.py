@@ -153,3 +153,103 @@ def test_interrupted_move_resumes_after_destination_was_published(
     assert not source.exists()
     assert journal is not None
     assert journal.status == "completed"
+
+
+def test_copy_publishes_only_one_canonical_file_per_source_hash(
+    tmp_path: Path,
+) -> None:
+    """Different source names with identical content must produce one copy."""
+    sources = [
+        tmp_path / "IMG_20161203_143236-2.jpg",
+        tmp_path / "IMG_20161203_143236-3.jpg",
+        tmp_path / "IMG_20161203_143236.jpg",
+    ]
+    for source in sources:
+        source.write_bytes(b"same")
+    with MediaCatalog(":memory:") as catalog:
+        records = tuple(catalog.record_file(source) for source in sources)
+        plan = build_organization_plan(records, tmp_path / "sorted")
+        result = execute_organization_plan(plan, catalog)
+
+    assert result.summary == {"copy": 1, "duplicate": 2}
+    assert [path.name for path in (tmp_path / "sorted/unknown").iterdir()] == [
+        "IMG_20161203_143236.jpg"
+    ]
+    assert all(source.exists() for source in sources)
+
+
+def test_move_deletes_every_source_after_one_canonical_publish(tmp_path: Path) -> None:
+    """A successful grouped move must clean all selected duplicate sources."""
+    sources = [
+        tmp_path / "IMG_20161203_143236-2.jpg",
+        tmp_path / "IMG_20161203_143236-3.jpg",
+        tmp_path / "IMG_20161203_143236.jpg",
+    ]
+    for source in sources:
+        source.write_bytes(b"same")
+    with MediaCatalog(":memory:") as catalog:
+        records = tuple(catalog.record_file(source) for source in sources)
+        plan = build_organization_plan(records, tmp_path / "sorted", "move")
+        result = execute_organization_plan(plan, catalog)
+
+    assert result.summary == {"move": 3}
+    assert not any(source.exists() for source in sources)
+    assert [path.name for path in (tmp_path / "sorted/unknown").iterdir()] == [
+        "IMG_20161203_143236.jpg"
+    ]
+
+
+def test_interrupted_duplicate_cleanup_resumes_without_recopying(  # pylint: disable=too-many-locals
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Grouped move cleanup must resume at the first remaining source."""
+    sources = [
+        tmp_path / "IMG_20161203_143236-2.jpg",
+        tmp_path / "IMG_20161203_143236-3.jpg",
+        tmp_path / "IMG_20161203_143236.jpg",
+    ]
+    for source in sources:
+        source.write_bytes(b"same")
+    database = tmp_path / "catalog.sqlite3"
+    output = tmp_path / "sorted"
+    source_set = set(sources)
+    original_unlink = Path.unlink
+    deletions = {"count": 0}
+
+    def interrupt_second_source(path: Path, *args, **kwargs):
+        if path in source_set:
+            deletions["count"] += 1
+            if deletions["count"] == 2:
+                raise KeyboardInterrupt
+        return original_unlink(path, *args, **kwargs)
+
+    with MediaCatalog(database) as catalog:
+        records = tuple(catalog.record_file(source) for source in sources)
+        plan = build_organization_plan(records, output, "move")
+        monkeypatch.setattr(Path, "unlink", interrupt_second_source)
+        with pytest.raises(KeyboardInterrupt):
+            execute_organization_plan(plan, catalog)
+
+    monkeypatch.undo()
+    destination = output / "unknown/IMG_20161203_143236.jpg"
+    assert destination.read_bytes() == b"same"
+    assert sum(source.exists() for source in sources) == 2
+
+    with MediaCatalog(database) as catalog:
+        records = tuple(
+            record
+            for source in sources
+            if (record := catalog.get_by_path(source)) is not None
+        )
+        existing = catalog.index_output(output)
+        repeated_plan = build_organization_plan(
+            records,
+            output,
+            "move",
+            existing_content=existing,
+        )
+        result = execute_organization_plan(repeated_plan, catalog)
+
+    assert result.summary == {"duplicate": 1, "move": 2}
+    assert not any(source.exists() for source in sources)
+    assert tuple(output.rglob("*.jpg")) == (destination,)

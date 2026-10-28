@@ -14,6 +14,7 @@ from defoutoir.catalog import (
     MediaCatalog,
     MediaRecord,
     read_catalog_records,
+    scan_output_content,
 )
 from defoutoir.executor import execute_organization_plan
 from defoutoir.learning import learn_media
@@ -329,12 +330,18 @@ def _organize_records(
     """Plan and optionally execute organization for prepared records."""
     records = _filter_records_by_media_type(records, arguments, logger)
     operation = "move" if arguments.move else "copy"
+    existing_content = (
+        catalog.index_output(arguments.output)
+        if catalog is not None
+        else scan_output_content(arguments.output)
+    )
     plan = build_organization_plan(
         records,
         arguments.output,
         operation,
         logger,
         date_unknown=arguments.dateunk,
+        existing_content=existing_content,
     )
     if arguments.dry_run:
         _log_dry_run_plan(plan, logger)

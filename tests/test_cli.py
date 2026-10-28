@@ -154,6 +154,59 @@ def test_only_photo_move_keeps_video_source(tmp_path: Path) -> None:
     assert not (output / "2024/01/03/video_20240103.mp4").exists()
 
 
+def test_same_content_can_be_copied_once_to_each_independent_output(
+    tmp_path: Path,
+) -> None:
+    """Content uniqueness must be scoped to each normalized output root."""
+    input_directory = tmp_path / "input"
+    input_directory.mkdir()
+    source = input_directory / "IMG_20240102.jpg"
+    source.write_bytes(b"photo")
+    database = tmp_path / "catalog.sqlite3"
+    first_output = tmp_path / "first-output"
+    second_output = tmp_path / "second-output"
+
+    first_command = [
+        "--input",
+        str(input_directory),
+        "--output",
+        str(first_output),
+        "--database",
+        str(database),
+    ]
+    assert main(first_command) == 0
+    assert (
+        main(
+            [
+                "--output",
+                str(second_output),
+                "--database",
+                str(database),
+                "--do-not-rescan",
+            ]
+        )
+        == 0
+    )
+    assert (
+        main(
+            [
+                "--output",
+                str(first_output),
+                "--database",
+                str(database),
+                "--do-not-rescan",
+            ]
+        )
+        == 0
+    )
+
+    relative = Path("2024/01/02/IMG_20240102.jpg")
+    assert (first_output / relative).read_bytes() == b"photo"
+    assert (second_output / relative).read_bytes() == b"photo"
+    assert len(tuple(first_output.rglob("*.jpg"))) == 1
+    assert len(tuple(second_output.rglob("*.jpg"))) == 1
+
+
 def test_main_rejects_missing_output_without_processing(tmp_path: Path, capsys) -> None:
     """Organization mode must explain that an output is required."""
     input_directory = tmp_path / "input"

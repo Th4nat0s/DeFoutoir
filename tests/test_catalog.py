@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+import defoutoir.catalog as catalog_module
 from defoutoir.catalog import (
     DEFAULT_DATABASE_PATH,
     HASH_CHUNK_SIZE,
@@ -49,21 +50,30 @@ def test_catalog_creates_versioned_schema(tmp_path: Path) -> None:
             )
         }
 
-    assert {"schema_meta", "media_files", "operation_journal"} <= tables
+    assert {
+        "schema_meta",
+        "media_files",
+        "operation_journal",
+        "organization_outputs",
+        "organized_content",
+    } <= tables
     assert "idx_media_files_sha1" in indexes
     assert "idx_media_files_media_date" in indexes
     assert "idx_operation_journal_status" in indexes
+    assert "idx_organized_content_output_sha1" in indexes
+    assert "idx_organized_content_source_sha1" in indexes
 
 
-def test_version_one_catalog_is_migrated_with_operation_journal(
-    tmp_path: Path,
+@pytest.mark.parametrize("version", ("1", "2"))
+def test_older_catalog_is_migrated_with_operation_journal(
+    tmp_path: Path, version: str
 ) -> None:
     """Existing catalogs must gain the journal without losing media rows."""
     database = tmp_path / "catalog.sqlite3"
     with sqlite3.connect(database) as connection:
-        connection.executescript("""
+        connection.executescript(f"""
             CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-            INSERT INTO schema_meta VALUES ('version', '1');
+            INSERT INTO schema_meta VALUES ('version', '{version}');
             CREATE TABLE media_files (
                 id INTEGER PRIMARY KEY,
                 source_path TEXT NOT NULL UNIQUE,
@@ -109,6 +119,29 @@ def test_operation_journal_persists_checkpoints(tmp_path: Path) -> None:
         )
         assert resumed is not None
         assert resumed.status == "copied"
+
+
+def test_output_indexes_are_isolated_and_reuse_unchanged_hashes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each output owns an incremental content index keyed by its root."""
+    first_output = tmp_path / "first"
+    second_output = tmp_path / "second"
+    first_file = create_file(first_output / "photo.jpg", b"same")
+    second_file = create_file(second_output / "photo.jpg", b"same")
+    database = tmp_path / "catalog.sqlite3"
+
+    with MediaCatalog(database) as catalog:
+        first = catalog.index_output(first_output)
+        second = catalog.index_output(second_output)
+        assert first == {hashlib.sha1(b"same").hexdigest(): first_file}
+        assert second == {hashlib.sha1(b"same").hexdigest(): second_file}
+
+        def fail_hash(*_args, **_kwargs):
+            raise AssertionError("unchanged output content must not be rehashed")
+
+        monkeypatch.setattr(catalog_module, "calculate_sha1", fail_hash)
+        assert catalog.index_output(first_output) == first
 
 
 def test_default_database_path_is_configurable() -> None:

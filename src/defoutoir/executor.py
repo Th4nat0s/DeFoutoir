@@ -42,7 +42,13 @@ def execute_organization_plan(
     _prepare_journal(plan, catalog)
     results: list[ExecutionEntry] = []
     for plan_entry in plan.entries:
-        result = _execute_entry(plan_entry, plan.operation, catalog, active_logger)
+        result = _execute_entry(
+            plan_entry,
+            plan.operation,
+            plan.output_directory,
+            catalog,
+            active_logger,
+        )
         results.append(result)
 
     summary = dict(Counter(_result_key(result) for result in results))
@@ -57,6 +63,7 @@ def execute_organization_plan(
 def _execute_entry(
     plan_entry: OrganizationPlanEntry,
     operation: PlanAction,
+    output_directory: Path,
     catalog: MediaCatalog | None,
     logger: logging.Logger,
 ) -> ExecutionEntry:
@@ -65,7 +72,9 @@ def _execute_entry(
         _record_state(catalog, plan_entry.source_path, "error", logger)
         return ExecutionEntry(plan_entry, False, plan_entry.reason)
     if plan_entry.action is PlanAction.DUPLICATE:
-        resumed = _resume_published_operation(plan_entry, operation, catalog, logger)
+        resumed = _resume_published_operation(
+            plan_entry, operation, output_directory, catalog, logger
+        )
         if resumed is not None:
             return resumed
     if plan_entry.action in (PlanAction.SKIP, PlanAction.DUPLICATE):
@@ -81,10 +90,14 @@ def _execute_entry(
     try:
         if plan_entry.action is PlanAction.COPY:
             _copy_plan_entry(plan_entry, logger)
+            _record_output(plan_entry, output_directory, catalog)
             _checkpoint(plan_entry, operation, catalog, "copied")
         elif plan_entry.action is PlanAction.MOVE:
             _copy_plan_entry(plan_entry, logger)
+            _record_output(plan_entry, output_directory, catalog)
             _checkpoint(plan_entry, operation, catalog, "copied")
+            if not _source_matches_entry(plan_entry, catalog):
+                raise ValueError("source changed while the move was being published")
             plan_entry.source_path.unlink()
         else:
             raise ValueError(f"unsupported plan action: {plan_entry.action}")
@@ -120,9 +133,28 @@ def _prepare_journal(
     if catalog is None:
         return
     for entry in plan.entries:
-        if entry.action not in (PlanAction.COPY, PlanAction.MOVE):
+        journal_duplicate_move = (
+            plan.operation is PlanAction.MOVE and entry.action is PlanAction.DUPLICATE
+        )
+        if (
+            entry.action not in (PlanAction.COPY, PlanAction.MOVE)
+            and not journal_duplicate_move
+        ):
             continue
         if entry.destination_path is None:
+            continue
+        existing = catalog.get_operation(
+            entry.source_path,
+            entry.destination_path,
+            plan.operation.value,
+            entry.sha1,
+        )
+        if (
+            entry.action is PlanAction.DUPLICATE
+            and existing is not None
+            and existing.status == "completed"
+            and not entry.source_path.exists()
+        ):
             continue
         catalog.prepare_operation(
             entry.source_path,
@@ -135,6 +167,7 @@ def _prepare_journal(
 def _resume_published_operation(
     entry: OrganizationPlanEntry,
     operation: PlanAction,
+    output_directory: Path,
     catalog: MediaCatalog | None,
     logger: logging.Logger,
 ) -> ExecutionEntry | None:
@@ -153,7 +186,15 @@ def _resume_published_operation(
         if calculate_sha1(entry.destination_path) != entry.sha1:
             raise ValueError("published destination does not match the journal hash")
         if operation is PlanAction.MOVE and entry.source_path.exists():
+            if not _source_matches_entry(entry, catalog):
+                raise ValueError("source changed after it was cataloged")
             entry.source_path.unlink()
+        catalog.record_output_content(
+            output_directory,
+            entry.destination_path,
+            entry.source_sha1 or entry.sha1,
+            entry.sha1,
+        )
         catalog.update_operation(
             entry.source_path,
             entry.destination_path,
@@ -186,6 +227,48 @@ def _resume_published_operation(
         entry.destination_path,
     )
     return ExecutionEntry(resumed_entry, True, None)
+
+
+def _record_output(
+    entry: OrganizationPlanEntry,
+    output_directory: Path,
+    catalog: MediaCatalog | None,
+) -> None:
+    """Add one published file to its output-specific content index."""
+    if catalog is None or entry.destination_path is None:
+        return
+    catalog.record_output_content(
+        output_directory,
+        entry.destination_path,
+        entry.source_sha1 or entry.sha1,
+        entry.sha1,
+    )
+
+
+def _source_matches_entry(
+    entry: OrganizationPlanEntry,
+    catalog: MediaCatalog | None,
+) -> bool:
+    """Verify cheaply that a source still has its cataloged content identity."""
+    expected_sha1 = entry.source_sha1 or entry.sha1
+    if catalog is not None:
+        record = catalog.get_by_path(entry.source_path)
+        try:
+            details = entry.source_path.stat()
+        except OSError:
+            return False
+        if (
+            record is not None
+            and record.sha1 == expected_sha1
+            and record.size_bytes == details.st_size
+            and record.modified_ns == details.st_mtime_ns
+            and record.metadata_changed_ns == details.st_ctime_ns
+        ):
+            return True
+    try:
+        return calculate_sha1(entry.source_path) == expected_sha1
+    except CatalogError:
+        return False
 
 
 def _checkpoint(  # pylint: disable=too-many-arguments,too-many-positional-arguments

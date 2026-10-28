@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Deduplicate organization globally per output SHA-1, select a canonical
+  date-bearing shortest filename, and remove every selected duplicate source
+  only after a grouped move is published and verified.
+- Add separate incremental SQLite content indexes for multiple output roots.
 - Normalize destination filenames to Unicode NFC so composed and decomposed
   accents behave consistently on network shares.
 - Read capture EXIF dates from embedded JPEG previews in Fujifilm RAF files,

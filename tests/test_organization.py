@@ -138,6 +138,48 @@ def test_unicode_equivalent_names_with_different_content_use_alternate_name(
     }
 
 
+def test_duplicate_group_prefers_shortest_name_containing_a_date(
+    tmp_path: Path,
+) -> None:
+    """A dated canonical name wins before an unrelated shorter name."""
+    sources = [
+        tmp_path / "toto.jpg",
+        tmp_path / "IMG_20161203_143236-2.jpg",
+        tmp_path / "IMG_20161203_143236.jpg",
+    ]
+    for source in sources:
+        source.write_bytes(b"same")
+    same_hash = hashlib.sha1(b"same", usedforsecurity=False).hexdigest()
+
+    plan = build_organization_plan(
+        tuple(_record(source, same_hash, "2016-12-03 14:32:38") for source in sources),
+        tmp_path / "sorted",
+    )
+
+    assert plan.entries[0].source_path.name == "IMG_20161203_143236.jpg"
+    assert plan.entries[0].action is PlanAction.COPY
+    assert plan.summary == {"copy": 1, "duplicate": 2}
+
+
+def test_existing_output_content_suppresses_copy_under_another_name(
+    tmp_path: Path,
+) -> None:
+    """Output-wide content identity must not depend on a destination filename."""
+    source = tmp_path / "source.jpg"
+    source.write_bytes(b"same")
+    same_hash = hashlib.sha1(b"same", usedforsecurity=False).hexdigest()
+    existing = tmp_path / "sorted/unknown/already-there.jpg"
+
+    plan = build_organization_plan(
+        (_record(source, same_hash),),
+        tmp_path / "sorted",
+        existing_content={same_hash: existing},
+    )
+
+    assert plan.entries[0].action is PlanAction.DUPLICATE
+    assert plan.entries[0].destination_path == existing
+
+
 def test_existing_same_content_is_duplicate(tmp_path: Path) -> None:
     source = tmp_path / "source.jpg"
     source.write_bytes(b"same")

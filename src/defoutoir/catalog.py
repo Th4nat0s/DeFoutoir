@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import sqlite3
 import time
 from collections.abc import Iterable
@@ -11,9 +12,10 @@ from pathlib import Path
 from typing import NamedTuple
 
 from defoutoir.log import get_logger
+from defoutoir.scanner import MEDIA_EXTENSIONS
 
 DEFAULT_DATABASE_PATH = Path("defoutoir.sqlite3")
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 HASH_CHUNK_SIZE = 1024 * 1024
 
 
@@ -49,6 +51,17 @@ class OperationJournalEntry(NamedTuple):
     error: str | None
     created_at_ns: int
     updated_at_ns: int
+
+
+class OutputContent(NamedTuple):
+    """One indexed media file below a specific organization output."""
+
+    destination_path: str
+    source_sha1: str | None
+    output_sha1: str
+    size_bytes: int
+    modified_ns: int
+    metadata_changed_ns: int
 
 
 class _FileSnapshot(NamedTuple):
@@ -353,6 +366,196 @@ class MediaCatalog:
         )
         return entry
 
+    def index_output(  # pylint: disable=too-many-locals
+        self, output: str | Path
+    ) -> dict[str, Path]:
+        """Incrementally index one output tree and return content locations."""
+        output_path = self._normalize_lookup_path(output)
+        connection = self._connection_or_raise()
+        now = time.time_ns()
+        with connection:
+            connection.execute(
+                """
+                INSERT INTO organization_outputs (
+                    output_path, created_at_ns, updated_at_ns
+                ) VALUES (?, ?, ?)
+                ON CONFLICT(output_path) DO UPDATE SET
+                    updated_at_ns = excluded.updated_at_ns
+                """,
+                (output_path, now, now),
+            )
+        output_id = self._output_id(output_path)
+        indexed = {row.destination_path: row for row in self._output_records(output_id)}
+        seen: set[str] = set()
+        discovered: list[OutputContent] = []
+        changed: list[OutputContent] = []
+        for path in _iter_output_files(Path(output_path)):
+            normalized = self._normalize_lookup_path(path)
+            seen.add(normalized)
+            details = path.stat()
+            previous = indexed.get(normalized)
+            if (
+                previous is not None
+                and previous.size_bytes == details.st_size
+                and previous.modified_ns == details.st_mtime_ns
+                and previous.metadata_changed_ns == details.st_ctime_ns
+            ):
+                discovered.append(previous)
+                continue
+            output_sha1 = calculate_sha1(path)
+            source_sha1 = (
+                previous.source_sha1
+                if previous is not None and previous.output_sha1 == output_sha1
+                else None
+            )
+            record = OutputContent(
+                normalized,
+                source_sha1,
+                output_sha1,
+                details.st_size,
+                details.st_mtime_ns,
+                details.st_ctime_ns,
+            )
+            changed.append(record)
+            discovered.append(record)
+
+        self._upsert_output_records(output_id, changed)
+        stale = set(indexed) - seen
+        if stale:
+            with connection:
+                connection.executemany(
+                    "DELETE FROM organized_content "
+                    "WHERE output_id = ? AND destination_path = ?",
+                    ((output_id, path) for path in stale),
+                )
+        content = _content_locations(discovered)
+        self._logger.info(
+            "Indexed output %s: %d media file(s), %d unique content hash(es).",
+            output_path,
+            len(discovered),
+            len(content),
+        )
+        return content
+
+    def record_output_content(
+        self,
+        output: str | Path,
+        destination: str | Path,
+        source_sha1: str,
+        output_sha1: str,
+    ) -> None:
+        """Record a successfully published destination in its output index."""
+        output_path = self._normalize_lookup_path(output)
+        destination_path = Path(destination).expanduser().resolve(strict=True)
+        details = destination_path.stat()
+        now = time.time_ns()
+        connection = self._connection_or_raise()
+        with connection:
+            connection.execute(
+                """
+                INSERT INTO organization_outputs (
+                    output_path, created_at_ns, updated_at_ns
+                ) VALUES (?, ?, ?)
+                ON CONFLICT(output_path) DO UPDATE SET
+                    updated_at_ns = excluded.updated_at_ns
+                """,
+                (output_path, now, now),
+            )
+        output_id = self._output_id(output_path)
+        self._upsert_output_records(
+            output_id,
+            (
+                OutputContent(
+                    str(destination_path),
+                    source_sha1,
+                    output_sha1,
+                    details.st_size,
+                    details.st_mtime_ns,
+                    details.st_ctime_ns,
+                ),
+            ),
+        )
+
+    def _output_id(self, output_path: str) -> int:
+        """Return the database identifier for a registered output path."""
+        row = (
+            self._connection_or_raise()
+            .execute(
+                "SELECT id FROM organization_outputs WHERE output_path = ?",
+                (output_path,),
+            )
+            .fetchone()
+        )
+        if row is None:
+            raise CatalogError(f"Organization output is not registered: {output_path}")
+        return int(row[0])
+
+    def _output_records(self, output_id: int) -> tuple[OutputContent, ...]:
+        """Return cached files for one output identifier."""
+        rows = (
+            self._connection_or_raise()
+            .execute(
+                """
+            SELECT destination_path, source_sha1, output_sha1, size_bytes,
+                   modified_ns, metadata_changed_ns
+            FROM organized_content
+            WHERE output_id = ?
+            ORDER BY destination_path
+            """,
+                (output_id,),
+            )
+            .fetchall()
+        )
+        return tuple(
+            OutputContent(
+                str(row[0]),
+                str(row[1]) if row[1] is not None else None,
+                str(row[2]),
+                int(row[3]),
+                int(row[4]),
+                int(row[5]),
+            )
+            for row in rows
+        )
+
+    def _upsert_output_records(
+        self, output_id: int, records: Iterable[OutputContent]
+    ) -> None:
+        """Insert or refresh cached output files in one transaction."""
+        records = tuple(records)
+        if not records:
+            return
+        connection = self._connection_or_raise()
+        with connection:
+            connection.executemany(
+                """
+                INSERT INTO organized_content (
+                    output_id, destination_path, source_sha1, output_sha1,
+                    size_bytes, modified_ns, metadata_changed_ns, updated_at_ns
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(output_id, destination_path) DO UPDATE SET
+                    source_sha1 = excluded.source_sha1,
+                    output_sha1 = excluded.output_sha1,
+                    size_bytes = excluded.size_bytes,
+                    modified_ns = excluded.modified_ns,
+                    metadata_changed_ns = excluded.metadata_changed_ns,
+                    updated_at_ns = excluded.updated_at_ns
+                """,
+                (
+                    (
+                        output_id,
+                        record.destination_path,
+                        record.source_sha1,
+                        record.output_sha1,
+                        record.size_bytes,
+                        record.modified_ns,
+                        record.metadata_changed_ns,
+                        time.time_ns(),
+                    )
+                    for record in records
+                ),
+            )
+
     def get_by_path(self, path: str | Path) -> MediaRecord | None:
         """Return the record for a normalized source path, if present."""
         source_path = self._normalize_lookup_path(path)
@@ -564,6 +767,47 @@ class MediaCatalog:
                 "CREATE INDEX IF NOT EXISTS idx_operation_journal_status "
                 "ON operation_journal (status)"
             )
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS organization_outputs (
+                    id INTEGER PRIMARY KEY,
+                    output_path TEXT NOT NULL UNIQUE,
+                    created_at_ns INTEGER NOT NULL,
+                    updated_at_ns INTEGER NOT NULL
+                )
+                """)
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS organized_content (
+                    id INTEGER PRIMARY KEY,
+                    output_id INTEGER NOT NULL REFERENCES organization_outputs(id)
+                        ON DELETE CASCADE,
+                    destination_path TEXT NOT NULL,
+                    source_sha1 TEXT,
+                    output_sha1 TEXT NOT NULL,
+                    size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
+                    modified_ns INTEGER NOT NULL,
+                    metadata_changed_ns INTEGER NOT NULL,
+                    updated_at_ns INTEGER NOT NULL,
+                    UNIQUE(output_id, destination_path)
+                )
+                """)
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_organized_content_output_sha1 "
+                "ON organized_content (output_id, output_sha1)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_organized_content_source_sha1 "
+                "ON organized_content (output_id, source_sha1)"
+            )
+
+        row = connection.execute(
+            "SELECT value FROM schema_meta WHERE key = 'version'"
+        ).fetchone()
+        if row is not None and int(row[0]) == 2:
+            with connection:
+                connection.execute(
+                    "UPDATE schema_meta SET value = ? WHERE key = 'version'",
+                    (str(SCHEMA_VERSION),),
+                )
 
         row = connection.execute(
             "SELECT value FROM schema_meta WHERE key = 'version'"
@@ -599,6 +843,59 @@ def calculate_sha1(path: str | Path) -> str:
     except OSError as error:
         raise CatalogError(f"Could not hash media file {path}: {error}") from error
     return digest.hexdigest()
+
+
+def scan_output_content(output: str | Path) -> dict[str, Path]:
+    """Build a read-only content map for a dry-run output tree."""
+    records = []
+    for path in _iter_output_files(Path(output).expanduser().resolve(strict=False)):
+        details = path.stat()
+        records.append(
+            OutputContent(
+                str(path.resolve(strict=True)),
+                None,
+                calculate_sha1(path),
+                details.st_size,
+                details.st_mtime_ns,
+                details.st_ctime_ns,
+            )
+        )
+    return _content_locations(records)
+
+
+def _iter_output_files(output: Path) -> Iterable[Path]:
+    """Yield supported regular media files without following symlinks."""
+    if not output.is_dir():
+        return
+    for directory, names, filenames in os.walk(
+        output,
+        followlinks=False,
+        onerror=_raise_walk_error,
+    ):
+        names[:] = sorted(
+            name for name in names if not (Path(directory) / name).is_symlink()
+        )
+        for filename in sorted(filenames):
+            path = Path(directory) / filename
+            if (
+                not path.is_symlink()
+                and path.is_file()
+                and path.suffix.casefold() in MEDIA_EXTENSIONS
+            ):
+                yield path
+
+
+def _raise_walk_error(error: OSError) -> None:
+    """Propagate an output traversal error instead of silently skipping it."""
+    raise error
+
+
+def _content_locations(records: Iterable[OutputContent]) -> dict[str, Path]:
+    """Select one stable existing location for every output content hash."""
+    locations: dict[str, Path] = {}
+    for record in sorted(records, key=lambda item: item.destination_path):
+        locations.setdefault(record.output_sha1, Path(record.destination_path))
+    return locations
 
 
 def read_catalog_records(database_path: str | Path) -> tuple[MediaRecord, ...]:

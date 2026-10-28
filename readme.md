@@ -26,6 +26,9 @@ usable date goes into `unknown/filename`. Planning happens before file
 operations and does not create directories or modify files. Existing files
 with the same SHA-1 are marked as duplicates; a different file with the same
 name receives a deterministic `filename__<sha1-prefix>.ext` alternate name.
+Source files are grouped by SHA-1 before planning, so only one representative
+is published. A filename containing a recognized date is preferred, then the
+shortest normalized filename, followed by stable lexical path ordering.
 
 ## Multiple input folders
 
@@ -144,10 +147,11 @@ python defoutoir.py \
 The non-selected media remain untouched. A normal scan still catalogs both
 categories; the filter is applied only to the copy or move plan.
 
-Move removes a source only after its destination has been written
-successfully. Existing destination files are never overwritten; identical
-content is skipped and different content receives a deterministic alternate
-name.
+Move removes every selected source in a duplicate group only after their one
+shared destination has been written and verified successfully. Copy keeps all
+sources but publishes only the canonical representative. Existing destination
+files are never overwritten; identical content is skipped and different
+content receives a deterministic alternate name.
 Destination filenames are normalized to Unicode NFC for compatibility with
 network shares and filesystems. Visually identical decomposed and composed
 names therefore collide safely: identical content is skipped, while different
@@ -160,8 +164,9 @@ changed. The journal records `pending`, `copied`, `completed`, and `error`
 checkpoints. If the process is stopped with Ctrl-C or interrupted by a machine
 restart, launch the same command again with the same `--database`, `--output`,
 and copy/move mode. Completed transfers are skipped. A move interrupted after
-publishing its destination verifies the destination SHA-1 before removing the
-remaining source and marking the operation complete.
+publishing its destination verifies the destination SHA-1 before removing each
+remaining source. Every source deletion has its own checkpoint, so cleanup
+continues safely after a restart.
 
 For a large tree, resume directly from the database without traversing the
 input again:
@@ -240,12 +245,16 @@ The catalog is stored in `defoutoir.sqlite3` by default. The database path is
 configurable with `--database` or through the Python catalog API. Dry-run uses
 an in-memory catalog and never creates or changes the configured database.
 
-The catalog uses schema version 2 and stores the normalized source path,
+The catalog uses schema version 3 and stores the normalized source path,
 incremental SHA-1 identity, file size, modification timestamps, resolved media
 date, date source, and processing state. A SHA-1 index makes duplicate-content
 groups queryable without changing or deleting the original files.
 The `operation_journal` table stores durable copy/move checkpoints and is
-created automatically when a version 1 catalog is opened.
+created automatically when an older catalog is opened. Output roots and their
+content hashes are indexed separately, so the same source can be copied once
+to each of several outputs while repeated runs never duplicate it within one
+output. Unchanged output files reuse cached hashes after cheap filesystem
+timestamp checks.
 
 List the catalog without scanning or modifying anything:
 

@@ -6,6 +6,7 @@ import logging
 import hashlib
 import unicodedata
 from collections import Counter
+from collections.abc import Mapping
 from datetime import date, datetime
 from enum import Enum
 from pathlib import Path
@@ -13,6 +14,7 @@ from typing import NamedTuple
 
 from defoutoir.catalog import MediaRecord
 from defoutoir.exif_dates import calculate_dated_sha1, supports_exif_date
+from defoutoir.filename_dates import extract_filename_date
 from defoutoir.log import get_logger
 
 
@@ -35,6 +37,7 @@ class OrganizationPlanEntry(NamedTuple):
     reason: str
     sha1: str
     exif_date: datetime | None = None
+    source_sha1: str = ""
 
 
 class OrganizationPlan(NamedTuple):
@@ -46,12 +49,13 @@ class OrganizationPlan(NamedTuple):
     summary: dict[str, int]
 
 
-def build_organization_plan(
+def build_organization_plan(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     records: tuple[MediaRecord, ...] | list[MediaRecord],
     output_directory: str | Path,
     operation: str = "copy",
     logger: logging.Logger | None = None,
     date_unknown: bool = False,
+    existing_content: Mapping[str, Path] | None = None,
 ) -> OrganizationPlan:
     """Build a plan without creating directories or changing any files."""
     active_logger = logger or get_logger("organization")
@@ -65,16 +69,42 @@ def build_organization_plan(
     output = Path(output_directory).expanduser().resolve(strict=False)
     entries: list[OrganizationPlanEntry] = []
     used_destinations: dict[Path, str] = {}
-    for record in sorted(records, key=lambda item: item.source_path):
-        entry = _plan_record(
-            record,
+    groups: dict[str, list[MediaRecord]] = {}
+    for record in records:
+        groups.setdefault(record.sha1, []).append(record)
+    selected_groups = []
+    for group in groups.values():
+        representative = min(group, key=_canonical_record_key)
+        selected_groups.append((representative, group))
+
+    for representative, group in sorted(
+        selected_groups, key=lambda item: item[0].source_path
+    ):
+        canonical = _plan_record(
+            representative,
             output,
             requested_action,
             used_destinations,
             active_logger,
             date_unknown,
+            existing_content,
         )
-        entries.append(entry)
+        entries.append(canonical)
+        for duplicate in sorted(
+            (record for record in group if record is not representative),
+            key=lambda record: record.source_path,
+        ):
+            entries.append(
+                OrganizationPlanEntry(
+                    source_path=Path(duplicate.source_path),
+                    destination_path=canonical.destination_path,
+                    action=PlanAction.DUPLICATE,
+                    reason="same source content is already represented in the plan",
+                    sha1=canonical.sha1,
+                    exif_date=None,
+                    source_sha1=duplicate.sha1,
+                )
+            )
 
     summary = dict(Counter(entry.action.value for entry in entries))
     active_logger.info(
@@ -85,13 +115,14 @@ def build_organization_plan(
     return OrganizationPlan(output, requested_action, tuple(entries), summary)
 
 
-def _plan_record(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+def _plan_record(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     record: MediaRecord,
     output: Path,
     operation: PlanAction,
     used_destinations: dict[Path, str],
     logger: logging.Logger,
     date_unknown: bool,
+    existing_content: Mapping[str, Path] | None,
 ) -> OrganizationPlanEntry:
     """Plan one record and reserve its deterministic destination."""
     source = Path(record.source_path)
@@ -107,12 +138,14 @@ def _plan_record(  # pylint: disable=too-many-arguments,too-many-positional-argu
             "destination escapes output directory",
             record.sha1,
             exif_date,
+            record.sha1,
         )
 
     try:
         output_sha1 = (
             calculate_dated_sha1(source, exif_date)
-            if exif_date is not None and destination.exists()
+            if exif_date is not None
+            and (destination.exists() or bool(existing_content))
             else record.sha1
         )
     except (OSError, ValueError) as error:
@@ -124,6 +157,26 @@ def _plan_record(  # pylint: disable=too-many-arguments,too-many-positional-argu
             f"cannot prepare EXIF update: {error}",
             record.sha1,
             exif_date,
+            record.sha1,
+        )
+
+    existing_destination = (
+        existing_content.get(output_sha1) if existing_content is not None else None
+    )
+    if existing_destination is not None:
+        logger.info(
+            "Planned duplicate: %s -> %s (content already exists in output)",
+            source,
+            existing_destination,
+        )
+        return OrganizationPlanEntry(
+            source,
+            existing_destination,
+            PlanAction.DUPLICATE,
+            "same content is already indexed in output",
+            output_sha1,
+            exif_date,
+            record.sha1,
         )
 
     destination, reason = _resolve_collision(
@@ -140,7 +193,28 @@ def _plan_record(  # pylint: disable=too-many-arguments,too-many-positional-argu
         action = operation
     logger.info("Planned %s: %s -> %s", action.value, source, destination)
     return OrganizationPlanEntry(
-        source, destination, action, reason, output_sha1, exif_date
+        source,
+        destination,
+        action,
+        reason,
+        output_sha1,
+        exif_date,
+        record.sha1,
+    )
+
+
+def _canonical_record_key(record: MediaRecord) -> tuple[object, ...]:
+    """Rank duplicate sources by date-bearing name, length, and stable path."""
+    source = Path(record.source_path)
+    normalized_name = unicodedata.normalize("NFC", source.name)
+    contains_date = extract_filename_date(Path(normalized_name)) is not None
+    return (
+        not source.is_file(),
+        not contains_date,
+        len(normalized_name),
+        normalized_name.casefold(),
+        record.source_path.casefold(),
+        record.source_path,
     )
 
 
