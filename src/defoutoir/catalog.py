@@ -86,6 +86,8 @@ class MediaCatalog:
         self.database_path = Path(database_path)
         self._logger = logger or get_logger("catalog")
         self._connection: sqlite3.Connection | None = None
+        self._resolved_paths: dict[str, str] = {}
+        self._output_ids: dict[str, int] = {}
 
     def __enter__(self) -> "MediaCatalog":
         """Open the catalog for use in a context manager."""
@@ -122,6 +124,8 @@ class MediaCatalog:
         if self._connection is not None:
             self._connection.close()
             self._connection = None
+        self._resolved_paths.clear()
+        self._output_ids.clear()
 
     @property
     def schema_version(self) -> int:
@@ -446,21 +450,21 @@ class MediaCatalog:
     ) -> None:
         """Record a successfully published destination in its output index."""
         output_path = self._normalize_lookup_path(output)
-        destination_path = Path(destination).expanduser().resolve(strict=True)
+        destination_path = Path(self._normalize_lookup_path(destination))
         details = destination_path.stat()
         now = time.time_ns()
         connection = self._connection_or_raise()
-        with connection:
-            connection.execute(
-                """
-                INSERT INTO organization_outputs (
-                    output_path, created_at_ns, updated_at_ns
-                ) VALUES (?, ?, ?)
-                ON CONFLICT(output_path) DO UPDATE SET
-                    updated_at_ns = excluded.updated_at_ns
-                """,
-                (output_path, now, now),
-            )
+        if output_path not in self._output_ids:
+            with connection:
+                connection.execute(
+                    """
+                    INSERT INTO organization_outputs (
+                        output_path, created_at_ns, updated_at_ns
+                    ) VALUES (?, ?, ?)
+                    ON CONFLICT(output_path) DO NOTHING
+                    """,
+                    (output_path, now, now),
+                )
         output_id = self._output_id(output_path)
         self._upsert_output_records(
             output_id,
@@ -478,6 +482,8 @@ class MediaCatalog:
 
     def _output_id(self, output_path: str) -> int:
         """Return the database identifier for a registered output path."""
+        if output_path in self._output_ids:
+            return self._output_ids[output_path]
         row = (
             self._connection_or_raise()
             .execute(
@@ -488,7 +494,8 @@ class MediaCatalog:
         )
         if row is None:
             raise CatalogError(f"Organization output is not registered: {output_path}")
-        return int(row[0])
+        self._output_ids[output_path] = int(row[0])
+        return self._output_ids[output_path]
 
     def _output_records(self, output_id: int) -> tuple[OutputContent, ...]:
         """Return cached files for one output identifier."""
@@ -822,11 +829,15 @@ class MediaCatalog:
             raise CatalogError("Media catalog is closed; use it as a context manager")
         return self._connection
 
-    @staticmethod
-    def _normalize_lookup_path(path: str | Path) -> str:
-        """Normalize a path for a catalog lookup without requiring existence."""
+    def _normalize_lookup_path(self, path: str | Path) -> str:
+        """Resolve each absolute lookup path once per open catalog session."""
         try:
-            return str(Path(path).expanduser().resolve(strict=False))
+            absolute = str(Path(path).expanduser().absolute())
+            if absolute not in self._resolved_paths:
+                resolved = str(Path(absolute).resolve(strict=False))
+                self._resolved_paths[absolute] = resolved
+                self._resolved_paths[resolved] = resolved
+            return self._resolved_paths[absolute]
         except (OSError, RuntimeError) as error:
             raise CatalogError(
                 f"Could not normalize media path {path}: {error}"

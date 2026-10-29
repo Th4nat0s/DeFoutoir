@@ -162,6 +162,19 @@ content receives the usual deterministic SHA-1 suffix.
 
 ### Stop and resume
 
+For NAS exports, keep the SQLite database on a local disk when possible:
+
+```bash
+python defoutoir.py --input /mnt/nas/photos --output /mnt/nas/sorted \
+  --database ./defoutoir.sqlite3 --only-photo --do-not-rescan
+```
+
+Use the database created by the earlier learning run. `--do-not-rescan` reuses
+source metadata, while the output inventory still checks for external changes.
+Exports reuse resolved catalog paths and output identifiers within each run.
+When `--dateunk` is used, EXIF is inserted while streaming to the destination
+temporary file. Each executed entry reports its position in the plan.
+
 Every real copy or move is journaled in the SQLite database before files are
 changed. The journal records `pending`, `copied`, `completed`, and `error`
 checkpoints. If the process is stopped with Ctrl-C or interrupted by a machine

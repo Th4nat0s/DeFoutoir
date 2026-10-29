@@ -51,6 +51,25 @@ def calculate_dated_sha1(path: str | Path, captured: datetime) -> str:
     return digest.hexdigest()
 
 
+def iter_copy_chunks(
+    path: Path,
+    captured: datetime,
+    logger: logging.Logger | None = None,
+) -> Iterator[bytes]:
+    """Stream a source with missing EXIF inserted before destination publication."""
+    active_logger = logger or get_logger("exif_dates")
+    if supports_exif_date(path) and extract_media_date(path, active_logger) is None:
+        yield from _dated_chunks(path, captured)
+        active_logger.info(
+            "Added EXIF DateTimeOriginal %s while copying %s",
+            captured.isoformat(sep=" "),
+            path,
+        )
+        return
+    with path.open("rb") as stream:
+        yield from iter(lambda: stream.read(STREAM_CHUNK_SIZE), b"")
+
+
 def write_missing_exif_date(
     path: str | Path,
     captured: datetime,

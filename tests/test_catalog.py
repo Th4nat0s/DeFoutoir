@@ -150,6 +150,23 @@ def test_default_database_path_is_configurable() -> None:
     assert MediaCatalog().database_path == DEFAULT_DATABASE_PATH
 
 
+def test_repeated_catalog_lookups_do_not_repeat_filesystem_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Repeated database operations must reuse canonical paths on a NAS."""
+    source = create_file(tmp_path / "photo.jpg", b"photo")
+    with MediaCatalog(":memory:") as catalog:
+        catalog.record_file(source)
+        assert catalog.get_by_path(source) is not None
+
+        def fail_resolve(*_args, **_kwargs):
+            raise AssertionError("canonical lookup path must already be cached")
+
+        monkeypatch.setattr(Path, "resolve", fail_resolve)
+        assert catalog.get_by_path(source) is not None
+        catalog.update_processing_state(source, "copied")
+
+
 def test_record_stores_hash_file_data_and_date(tmp_path: Path) -> None:
     """A record must persist identity, timestamps, date, and state."""
     media_file = create_file(tmp_path / "photo.jpg", b"photo contents")

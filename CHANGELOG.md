@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Reduce NAS metadata round trips by caching resolved catalog paths and output
+  identifiers for each connection. Stream missing EXIF dates directly into the
+  destination temporary file with a 1 MiB transfer buffer, avoid redundant copy
+  checkpoints, and report per-file execution progress.
 - Interleave journal creation with file execution so large plans start copying
   immediately while preserving per-file restart safety.
 - Process undated media first, then dated media from the oldest capture

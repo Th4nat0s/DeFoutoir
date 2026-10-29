@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from defoutoir.catalog import CatalogError, MediaCatalog, calculate_sha1
-from defoutoir.exif_dates import write_missing_exif_date
+from defoutoir.exif_dates import STREAM_CHUNK_SIZE, iter_copy_chunks
 from defoutoir.log import get_logger
 from defoutoir.organization import OrganizationPlan, OrganizationPlanEntry, PlanAction
 
@@ -40,7 +40,14 @@ def execute_organization_plan(
     """Execute each safe plan entry and continue after per-file failures."""
     active_logger = logger or get_logger("executor")
     results: list[ExecutionEntry] = []
-    for plan_entry in plan.entries:
+    for position, plan_entry in enumerate(plan.entries, start=1):
+        active_logger.info(
+            "Progress %d/%d: %s -> %s",
+            position,
+            len(plan.entries),
+            plan_entry.source_path,
+            plan_entry.destination_path,
+        )
         _prepare_journal_entry(plan, plan_entry, catalog)
         result = _execute_entry(
             plan_entry,
@@ -91,7 +98,6 @@ def _execute_entry(
         if plan_entry.action is PlanAction.COPY:
             _copy_plan_entry(plan_entry, logger)
             _record_output(plan_entry, output_directory, catalog)
-            _checkpoint(plan_entry, operation, catalog, "copied")
         elif plan_entry.action is PlanAction.MOVE:
             _copy_plan_entry(plan_entry, logger)
             _record_output(plan_entry, output_directory, catalog)
@@ -335,13 +341,15 @@ def _copy_exclusive(
             delete=False,
         ) as temporary:
             temporary_path = Path(temporary.name)
-            with source.open("rb") as source_stream:
-                shutil.copyfileobj(source_stream, temporary)
+            if exif_date is not None:
+                for chunk in iter_copy_chunks(source, exif_date, logger):
+                    temporary.write(chunk)
+            else:
+                with source.open("rb") as source_stream:
+                    shutil.copyfileobj(source_stream, temporary, STREAM_CHUNK_SIZE)
             temporary.flush()
             os.fsync(temporary.fileno())
         shutil.copystat(source, temporary_path)
-        if exif_date is not None:
-            write_missing_exif_date(temporary_path, exif_date, logger)
         os.link(temporary_path, destination)
     finally:
         if temporary_path is not None:

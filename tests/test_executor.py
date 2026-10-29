@@ -3,18 +3,84 @@
 # pylint: disable=missing-function-docstring,protected-access
 
 import hashlib
+from datetime import datetime
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from defoutoir import executor
 from defoutoir.catalog import MediaCatalog
 from defoutoir.executor import execute_organization_plan
 from defoutoir.organization import build_organization_plan
+from defoutoir.metadata import extract_media_date
 
 
 def _sha1(data: bytes) -> str:
     return hashlib.sha1(data, usedforsecurity=False).hexdigest()
+
+
+@pytest.mark.parametrize("extension", ("jpg", "png"))
+def test_exif_copy_writes_only_one_destination_temporary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extension: str
+) -> None:
+    """NAS EXIF copies must stream directly without rewriting a staged copy."""
+    source = tmp_path / f"source.{extension}"
+    destination = tmp_path / "output" / source.name
+    Image.new("RGB", (8, 6), color="blue").save(source)
+    original_bytes = source.read_bytes()
+    original_temporary = executor.tempfile.NamedTemporaryFile
+    temporaries = []
+
+    def track_temporary(*args, **kwargs):
+        # The executor owns and closes this returned temporary file.
+        # pylint: disable=consider-using-with
+        result = original_temporary(*args, **kwargs)
+        temporaries.append(result.name)
+        return result
+
+    monkeypatch.setattr(executor.tempfile, "NamedTemporaryFile", track_temporary)
+    executor._copy_exclusive(source, destination, datetime(2024, 1, 2, 12))
+
+    assert len(temporaries) == 1
+    assert source.read_bytes() == original_bytes
+    assert extract_media_date(destination).value == datetime(2024, 1, 2, 12)
+    with Image.open(source) as first, Image.open(destination) as second:
+        assert first.tobytes() == second.tobytes()
+
+
+def test_streaming_exif_copy_keeps_existing_date(tmp_path: Path) -> None:
+    """Stale catalog fallback dates must never overwrite real source metadata."""
+    source = tmp_path / "source.jpg"
+    destination = tmp_path / "output/source.jpg"
+    exif = Image.Exif()
+    exif[36867] = "2001:02:03 04:05:06"
+    Image.new("RGB", (8, 6)).save(source, exif=exif)
+
+    executor._copy_exclusive(source, destination, datetime(2024, 1, 2, 12))
+
+    assert destination.read_bytes() == source.read_bytes()
+
+
+def test_interrupted_exif_stream_does_not_publish_partial_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Streaming failures must keep the source and remove partial output."""
+    source = tmp_path / "source.jpg"
+    destination = tmp_path / "output/source.jpg"
+    source.write_bytes(b"source")
+
+    def failing_chunks(*_args, **_kwargs):
+        yield b"partial"
+        raise OSError("interrupted stream")
+
+    monkeypatch.setattr(executor, "iter_copy_chunks", failing_chunks)
+    with pytest.raises(OSError, match="interrupted stream"):
+        executor._copy_exclusive(source, destination, datetime(2024, 1, 2, 12))
+
+    assert source.read_bytes() == b"source"
+    assert not destination.exists()
+    assert not tuple(destination.parent.iterdir())
 
 
 def test_copy_creates_destination_and_preserves_source(tmp_path: Path) -> None:
